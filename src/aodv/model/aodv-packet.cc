@@ -131,7 +131,8 @@ RreqHeader::RreqHeader(uint8_t flags,
                        Ipv4Address dst,
                        uint32_t dstSeqNo,
                        Ipv4Address origin,
-                       uint32_t originSeqNo)
+                       uint32_t originSeqNo,
+                       uint8_t WHForwardFlag)
     : m_flags(flags),
       m_reserved(reserved),
       m_hopCount(hopCount),
@@ -139,7 +140,8 @@ RreqHeader::RreqHeader(uint8_t flags,
       m_dst(dst),
       m_dstSeqNo(dstSeqNo),
       m_origin(origin),
-      m_originSeqNo(originSeqNo)
+      m_originSeqNo(originSeqNo),
+      m_WHForwardFlag(WHForwardFlag)
 {
 }
 
@@ -164,7 +166,7 @@ RreqHeader::GetInstanceTypeId() const
 uint32_t
 RreqHeader::GetSerializedSize() const
 {
-    return 23;
+    return 23 + 1; // +1 for WHForwardFlag
 }
 
 void
@@ -178,6 +180,8 @@ RreqHeader::Serialize(Buffer::Iterator i) const
     i.WriteHtonU32(m_dstSeqNo);
     WriteTo(i, m_origin);
     i.WriteHtonU32(m_originSeqNo);
+
+    i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
 }
 
 uint32_t
@@ -193,6 +197,8 @@ RreqHeader::Deserialize(Buffer::Iterator start)
     ReadFrom(i, m_origin);
     m_originSeqNo = i.ReadNtohU32();
 
+    m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
+
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
     return dist;
@@ -206,7 +212,8 @@ RreqHeader::Print(std::ostream& os) const
     os << " source: ipv4 " << m_origin << " sequence number " << m_originSeqNo;
     os << " flags: Gratuitous RREP " << (*this).GetGratuitousRrep() << " Destination only "
        << (*this).GetDestinationOnly() << " Unknown sequence number " << (*this).GetUnknownSeqno();
-}
+    os << " WHForwardFlag " << m_WHForwardFlag;
+    }
 
 std::ostream&
 operator<<(std::ostream& os, const RreqHeader& h)
@@ -277,7 +284,8 @@ RreqHeader::operator==(const RreqHeader& o) const
 {
     return (m_flags == o.m_flags && m_reserved == o.m_reserved && m_hopCount == o.m_hopCount &&
             m_requestID == o.m_requestID && m_dst == o.m_dst && m_dstSeqNo == o.m_dstSeqNo &&
-            m_origin == o.m_origin && m_originSeqNo == o.m_originSeqNo);
+            m_origin == o.m_origin && m_originSeqNo == o.m_originSeqNo &&
+            m_WHForwardFlag == o.m_WHForwardFlag);
 }
 
 //-----------------------------------------------------------------------------
@@ -289,13 +297,15 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
                        Ipv4Address dst,
                        uint32_t dstSeqNo,
                        Ipv4Address origin,
-                       Time lifeTime)
+                       Time lifeTime,
+                       uint8_t WHForwardFlag)
     : m_flags(0),
       m_prefixSize(prefixSize),
       m_hopCount(hopCount),
       m_dst(dst),
       m_dstSeqNo(dstSeqNo),
-      m_origin(origin)
+      m_origin(origin),
+      m_WHForwardFlag(WHForwardFlag)
 {
     m_lifeTime = uint32_t(lifeTime.GetMilliSeconds());
 }
@@ -321,7 +331,7 @@ RrepHeader::GetInstanceTypeId() const
 uint32_t
 RrepHeader::GetSerializedSize() const
 {
-    return 19;
+    return 19 + 1; // +1 for WHForwardFlag
 }
 
 void
@@ -334,6 +344,7 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     i.WriteHtonU32(m_dstSeqNo);
     WriteTo(i, m_origin);
     i.WriteHtonU32(m_lifeTime);
+    i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
 }
 
 uint32_t
@@ -348,6 +359,7 @@ RrepHeader::Deserialize(Buffer::Iterator start)
     m_dstSeqNo = i.ReadNtohU32();
     ReadFrom(i, m_origin);
     m_lifeTime = i.ReadNtohU32();
+    m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
 
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
@@ -363,7 +375,8 @@ RrepHeader::Print(std::ostream& os) const
         os << " prefix size " << m_prefixSize;
     }
     os << " source ipv4 " << m_origin << " lifetime " << m_lifeTime
-       << " acknowledgment required flag " << (*this).GetAckRequired();
+       << " acknowledgment required flag " << (*this).GetAckRequired()
+       << " WHForwardFlag " << m_WHForwardFlag;
 }
 
 void
@@ -415,7 +428,7 @@ RrepHeader::operator==(const RrepHeader& o) const
 {
     return (m_flags == o.m_flags && m_prefixSize == o.m_prefixSize && m_hopCount == o.m_hopCount &&
             m_dst == o.m_dst && m_dstSeqNo == o.m_dstSeqNo && m_origin == o.m_origin &&
-            m_lifeTime == o.m_lifeTime);
+            m_lifeTime == o.m_lifeTime && m_WHForwardFlag == o.m_WHForwardFlag);
 }
 
 void
@@ -428,6 +441,7 @@ RrepHeader::SetHello(Ipv4Address origin, uint32_t srcSeqNo, Time lifetime)
     m_dstSeqNo = srcSeqNo;
     m_origin = origin;
     m_lifeTime = lifetime.GetMilliSeconds();
+    m_WHForwardFlag = 0;
 }
 
 std::ostream&

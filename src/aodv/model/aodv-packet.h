@@ -137,6 +137,10 @@ class RreqHeader : public Header
      * @param dstSeqNo the destination sequence number
      * @param origin the origin IP address
      * @param originSeqNo the origin sequence number
+     * @param WHForwardFlag 内部WH攻撃用転送フラグ（0） 0:通常パケット
+     *                      1 : 10,0,0,2 → 10,0,0,3へ転送するパケット
+     *                      2 : 10,0,0,3 → 10,0,0,2へ転送するパケット
+     *                      3 : 再ブロードキャスト後のパケット
      */
     RreqHeader(uint8_t flags = 0,
                uint8_t reserved = 0,
@@ -145,7 +149,8 @@ class RreqHeader : public Header
                Ipv4Address dst = Ipv4Address(),
                uint32_t dstSeqNo = 0,
                Ipv4Address origin = Ipv4Address(),
-               uint32_t originSeqNo = 0);
+               uint32_t originSeqNo = 0,
+               uint8_t WHForwardFlag = 0);
 
     /**
      * @brief Get the type ID.
@@ -267,6 +272,17 @@ class RreqHeader : public Header
         return m_originSeqNo;
     }
 
+    //内部WH WHノード間転送フラグ 設定・取得
+    void SetWHForwardFlag(uint8_t f)
+    {
+        m_WHForwardFlag = f;
+    }
+
+    uint8_t GetWHForwardFlag() const
+    {
+        return m_WHForwardFlag;
+    }
+
     // Flags
     /**
      * @brief Set the gratuitous RREP flag
@@ -315,6 +331,7 @@ class RreqHeader : public Header
     uint32_t m_dstSeqNo;    ///< Destination Sequence Number
     Ipv4Address m_origin;   ///< Originator IP Address
     uint32_t m_originSeqNo; ///< Source Sequence Number
+    uint8_t m_WHForwardFlag;///< 内部WH攻撃用転送フラグ
 };
 
 /**
@@ -355,13 +372,18 @@ class RrepHeader : public Header
      * @param dstSeqNo the destination sequence number
      * @param origin the origin IP address
      * @param lifetime the lifetime
+     * @param WHForwardFlag 内部WH攻撃用転送フラグ（0） 0:通常パケット
+     *                      1 : 10,0,0,2 → 10,0,0,3へ転送するパケット
+     *                      2 : 10,0,0,3 → 10,0,0,2へ転送するパケット
+     *                      3 : 再ブロードキャスト後のパケット
      */
     RrepHeader(uint8_t prefixSize = 0,
                uint8_t hopCount = 0,
                Ipv4Address dst = Ipv4Address(),
                uint32_t dstSeqNo = 0,
                Ipv4Address origin = Ipv4Address(),
-               Time lifetime = MilliSeconds(0));
+               Time lifetime = MilliSeconds(0),
+               uint8_t WHForwardFlag = 0);
     /**
      * @brief Get the type ID.
      * @return the object TypeId
@@ -457,6 +479,17 @@ class RrepHeader : public Header
      */
     Time GetLifeTime() const;
 
+    //内部WH WHノード間転送フラグ 設定・取得
+    void SetWHForwardFlag(uint8_t f)
+    {
+        m_WHForwardFlag = f;
+    }
+
+    uint8_t GetWHForwardFlag() const
+    {
+        return m_WHForwardFlag;
+    }
+
     // Flags
     /**
      * @brief Set the ack required flag
@@ -503,6 +536,7 @@ class RrepHeader : public Header
     uint32_t m_dstSeqNo;  ///< Destination Sequence Number
     Ipv4Address m_origin; ///< Source IP Address
     uint32_t m_lifeTime;  ///< Lifetime (in milliseconds)
+    uint8_t m_WHForwardFlag; ///< 内部WH攻撃用転送フラグ
 };
 
 /**

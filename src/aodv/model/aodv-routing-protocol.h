@@ -355,7 +355,20 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param rrepHeader RREP message header
      * @param receiverIfaceAddr receiver interface IP address
      */
-    void ProcessHello(const RrepHeader& rrepHeader, Ipv4Address receiverIfaceAddr);
+    void ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiverIfaceAddr);
+
+    //内部WH攻撃
+    /*攻撃者間の経路が構築されていない場合の処理。経路作成後に、hrlloメッセージを相方に転送する。
+    */
+    void ProcessHelloAfterRoute(const RrepHeader& rrepHeader,
+                                        Ipv4Address receiver,
+                                        Ipv4Address partner);
+
+    void ForwardHelloToPartner(const RrepHeader& rrepHeader,
+                                       RoutingTableEntry& toPartner);
+
+    //内部WH攻撃　中継ノードによるhelloメッセージの転送
+    void ForwardHelloByIntermediateNode(const RrepHeader& rrepHeader);
     /**
      * Create loopback route for given header
      *
