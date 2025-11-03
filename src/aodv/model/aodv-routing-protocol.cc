@@ -1338,6 +1338,7 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
      * and RREQ ID. If such a RREQ has been received, the node silently discards the newly received
      * RREQ.
      */
+
     //同じIDのRREQを受信した場合は破棄
     if (m_rreqIdCache.IsDuplicate(origin, id))
     {
@@ -1346,7 +1347,6 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
     }
 
     uint8_t hop = rreqHeader.GetHopCount();
-    // Increment RREQ hop count
     if(rreqHeader.GetWHForwardFlag() == 1 || rreqHeader.GetWHForwardFlag() == 2)
     {
         NS_LOG_DEBUG("転送フラグが立っているためホップカウントをインクリメントしない");
@@ -1357,6 +1357,21 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
         hop = hop + 1;
         rreqHeader.SetHopCount(hop);
     }
+
+    //転送されたメッセージを攻撃ノードが受信した場合、メッセージを破棄
+    if(rreqHeader.GetWHForwardFlag() == 3)
+    {
+        NS_LOG_DEBUG("転送されたHelloメッセージを受信しました: " << receiver);
+
+        if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3") ||
+        receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.2"))
+        {
+            NS_LOG_DEBUG("転送後のメッセージを攻撃者が受信しました。" << receiver);
+            return;
+        }
+    }
+
+    
 
     /*
      *  When the reverse route is created or updated, the following actions on the route are also
@@ -1448,7 +1463,7 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
     {
         m_routingTable.LookupRoute(origin, toOrigin);
         NS_LOG_DEBUG("Send reply since I am the destination  ホップ数：" << rreqHeader.GetHopCount());
-        //SendReply(rreqHeader, toOrigin);
+        SendReply(rreqHeader, toOrigin);
         return;
     }
     /*
@@ -1485,24 +1500,11 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
             if (!rreqHeader.GetDestinationOnly() && toDst.GetFlag() == VALID)
             {
                 m_routingTable.LookupRoute(origin, toOrigin);
-                //SendReplyByIntermediateNode(toDst, toOrigin, rreqHeader.GetGratuitousRrep());
+                SendReplyByIntermediateNode(toDst, toOrigin, rreqHeader.GetGratuitousRrep());
                 //return;
             }
             rreqHeader.SetDstSeqno(toDst.GetSeqNo());
             rreqHeader.SetUnknownSeqno(false);
-        }
-    }
-
-    //転送されたメッセージを攻撃ノードが受信した場合、メッセージを破棄
-    if(rreqHeader.GetWHForwardFlag() == 3)
-    {
-        NS_LOG_DEBUG("転送されたHelloメッセージを受信しました: " << receiver);
-
-        if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3") ||
-        receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.2"))
-        {
-            NS_LOG_DEBUG("転送後のメッセージを攻撃者が受信しました。" << receiver);
-            return;
         }
     }
 
@@ -1530,9 +1532,9 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
             rreqHeader.SetWHForwardFlag(2);
         }
 
-        //相方にRREQを転送
+       //相方にRREQを転送
         NS_LOG_DEBUG("WHノード" << receiver <<"が受信したRREQを相方" << partner << "に転送");
-
+ 
         //相方までのルートを取得
         RoutingTableEntry toPartner;
         if(!m_routingTable.LookupRoute(partner, toPartner))
@@ -1760,8 +1762,31 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
     Ipv4Address dst = rrepHeader.GetDst();
     NS_LOG_LOGIC("RREP destination " << dst << " RREP origin " << rrepHeader.GetOrigin());
 
-    uint8_t hop = rrepHeader.GetHopCount() + 1;
-    rrepHeader.SetHopCount(hop);
+   uint8_t hop = rrepHeader.GetHopCount();
+    // Increment RREQ hop count
+    if(rrepHeader.GetWHForwardFlag() == 1 || rrepHeader.GetWHForwardFlag() == 2)
+    {
+        NS_LOG_DEBUG("転送フラグが立っているためホップカウントをインクリメントしない");
+    }
+    else
+    {
+        NS_LOG_DEBUG("転送フラグが立っていないためホップカウントをインクリメントする");
+        hop = hop + 1;
+        rrepHeader.SetHopCount(hop);
+    }
+
+    //転送されたメッセージを攻撃ノードが受信した場合、メッセージを破棄
+    if(rrepHeader.GetWHForwardFlag() == 3)
+    {
+        NS_LOG_DEBUG("転送されたRREPを受信しました: " << receiver);
+        
+        if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3") ||
+        receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.2"))
+        {
+            NS_LOG_DEBUG("転送後のメッセージを攻撃者が受信しました。" << receiver);
+            return;
+        }
+    }
 
     // If RREP is Hello message
     if (dst == rrepHeader.GetOrigin())
@@ -1769,6 +1794,8 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         ProcessHello(rrepHeader, receiver);
         return;
     }
+
+    NS_LOG_DEBUG("送信元アドレス：" << sender << "からのRREPを　" << receiver << "　が受信");
 
     /*
      * If the route table entry to the destination is created or updated, then the following actions
@@ -1794,6 +1821,8 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         /*nextHop=*/sender,
         /*lifetime=*/rrepHeader.GetLifeTime());
     RoutingTableEntry toDst;
+
+    // 既存のルートエントリが存在するかどうかを確認
     if (m_routingTable.LookupRoute(dst, toDst))
     {
         // 既存のエントリは、次の状況でのみ更新されます。
@@ -1828,6 +1857,7 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         SendReplyAck(sender);
         rrepHeader.SetAckRequired(false);
     }
+
     NS_LOG_LOGIC("receiver " << receiver << " origin " << rrepHeader.GetOrigin());
     if (IsMyOwnAddress(rrepHeader.GetOrigin()))
     {
@@ -1847,12 +1877,14 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
     if (!m_routingTable.LookupRoute(rrepHeader.GetOrigin(), toOrigin) ||
         toOrigin.GetFlag() == IN_SEARCH)
     {
+        NS_LOG_DEBUG("RREPの発信元へのルートがありません　" << rrepHeader.GetOrigin());
         return; // Impossible! drop.
     }
     toOrigin.SetLifeTime(std::max(m_activeRouteTimeout, toOrigin.GetLifeTime()));
     m_routingTable.Update(toOrigin);
 
     // Update information about precursors
+    //前駆者　＝　このノードを経由して、宛先へパケットを送っている upstream ノード
     if (m_routingTable.LookupValidRoute(rrepHeader.GetDst(), toDst))
     {
         toDst.InsertPrecursor(toOrigin.GetNextHop());
@@ -1871,13 +1903,89 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         toNextHopToOrigin.InsertPrecursor(toDst.GetNextHop());
         m_routingTable.Update(toNextHopToOrigin);
     }
+
     SocketIpTtlTag tag;
     p->RemovePacketTag(tag);
+    
     if (tag.GetTtl() < 2)
     {
         NS_LOG_DEBUG("TTL exceeded. Drop RREP destination " << dst << " origin "
                                                             << rrepHeader.GetOrigin());
         return;
+    }
+
+    //入口側のWHノード受信処理
+    if (receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3"))
+    {
+        //相方のIPアドレスを設定し、転送フラグを立てる
+        Ipv4Address partner;
+        if(receiver == Ipv4Address("10.0.0.2"))
+        {
+            partner = Ipv4Address("10.1.2.2");
+            rrepHeader.SetWHForwardFlag(1);
+
+        }else if(receiver == Ipv4Address("10.0.0.3"))
+        {
+            partner = Ipv4Address("10.1.2.1");
+            rrepHeader.SetWHForwardFlag(2);
+        }
+
+        //相方までのルートを取得
+        RoutingTableEntry toPartner;
+        if(!m_routingTable.LookupRoute(partner, toPartner))
+        {
+            NS_LOG_DEBUG("相方ノード" << partner << "までのルートが存在しないため転送できません");
+            return;
+        }else
+        {
+            NS_LOG_DEBUG("相方ノード" << partner << "までのルートを取得しました");
+        }
+
+        //相方にRREPを転送
+        NS_LOG_DEBUG("WHノード" << receiver <<"が受信したRREPを相方" << partner << "に転送");
+
+        Ptr<Packet> packet = Create<Packet>();
+        SocketIpTtlTag ttl;
+        ttl.SetTtl(tag.GetTtl());
+        packet->AddPacketTag(ttl);
+        packet->AddHeader(rrepHeader);
+        TypeHeader tHeader(AODVTYPE_RREP);
+        packet->AddHeader(tHeader);
+        Ptr<Socket> socket = FindSocketWithInterfaceAddress(toPartner.GetInterface());
+        NS_ASSERT(socket);
+        socket->SendTo(packet, 0, InetSocketAddress(toPartner.GetNextHop(), AODV_PORT));
+        return;
+    }
+
+    //出口側の受信処理
+    if (rrepHeader.GetWHForwardFlag() == 1 || rrepHeader.GetWHForwardFlag() == 2)
+    {
+        if(rrepHeader.GetWHForwardFlag() == 1)
+        {
+            NS_LOG_DEBUG("WH転送フラグ1付きのRREPを受信しました。");
+
+            if(receiver == Ipv4Address("10.1.2.2"))
+            {
+                NS_LOG_DEBUG("相方ノードに到達しました: " << receiver);
+            }else{
+                NS_LOG_DEBUG("相方ノード以外がRREPを受信しました: " << receiver);
+                return;
+            }
+        }else{
+            NS_LOG_DEBUG("WH転送フラグ2付きのRREPを受信しました。");
+
+            if(receiver == Ipv4Address("10.1.2.1"))
+            {
+                NS_LOG_DEBUG("相方ノードに到達しました: " << receiver);
+            }else{
+                NS_LOG_DEBUG("相方ノード以外がRREPを受信しました: " << receiver);
+                return;
+            }
+        }
+
+        rrepHeader.SetWHForwardFlag(3); //転送完了フラグを立てる
+
+
     }
 
     Ptr<Packet> packet = Create<Packet>();
