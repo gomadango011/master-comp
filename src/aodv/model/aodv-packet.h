@@ -376,6 +376,8 @@ class RrepHeader : public Header
      *                      1 : 10,0,0,2 → 10,0,0,3へ転送するパケット
      *                      2 : 10,0,0,3 → 10,0,0,2へ転送するパケット
      *                      3 : 再ブロードキャスト後のパケット
+     * @param NeighborCount 隣接ノードの隣接ノード数（0）
+     * @param NeighborRatio 隣接ノード比率（0.0）
      */
     RrepHeader(uint8_t prefixSize = 0,
                uint8_t hopCount = 0,
@@ -383,7 +385,9 @@ class RrepHeader : public Header
                uint32_t dstSeqNo = 0,
                Ipv4Address origin = Ipv4Address(),
                Time lifetime = MilliSeconds(0),
-               uint8_t WHForwardFlag = 0);
+               uint8_t WHForwardFlag = 0,
+               uint32_t NeighborCount = 0,
+               float NeighborRatio = 0.0);
     /**
      * @brief Get the type ID.
      * @return the object TypeId
@@ -490,6 +494,27 @@ class RrepHeader : public Header
         return m_WHForwardFlag;
     }
 
+    void SetNeighborCount(uint32_t count)
+    {
+        m_NeighborCount = count;
+    }
+
+    uint32_t GetNeighborCount() const
+    {
+        return m_NeighborCount;
+    }
+
+    //隣接ノード比率 設定・取得
+    void SetNeighborRatio(float ratio)
+    {
+        m_NeighborRatio = ratio;
+    }
+
+    float GetNeighborRatio() const
+    {
+        return m_NeighborRatio;
+    }
+
     // Flags
     /**
      * @brief Set the ack required flag
@@ -537,6 +562,8 @@ class RrepHeader : public Header
     Ipv4Address m_origin; ///< Source IP Address
     uint32_t m_lifeTime;  ///< Lifetime (in milliseconds)
     uint8_t m_WHForwardFlag; ///< 内部WH攻撃用転送フラグ
+    uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
+    float m_NeighborRatio;    ///< 隣接ノード比率
 };
 
 /**

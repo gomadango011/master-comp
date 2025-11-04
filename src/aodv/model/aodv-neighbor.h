@@ -143,6 +143,12 @@ class Neighbors
         return m_handleLinkFailure;
     }
 
+    //隣接ノード数を取得
+    uint32_t GetNeighborCount() const
+    {
+        return m_nb.size();
+    }
+
   private:
     /// link failure callback
     Callback<void, Ipv4Address> m_handleLinkFailure;

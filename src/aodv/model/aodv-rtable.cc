@@ -41,7 +41,8 @@ RoutingTableEntry::RoutingTableEntry(Ptr<NetDevice> dev,
                                      Ipv4InterfaceAddress iface,
                                      uint16_t hops,
                                      Ipv4Address nextHop,
-                                     Time lifetime)
+                                     Time lifetime,
+                                     uint32_t NeighborCount)
     : m_ackTimer(Timer::CANCEL_ON_DESTROY),
       m_validSeqNo(vSeqNo),
       m_seqNo(seqNo),
@@ -51,7 +52,8 @@ RoutingTableEntry::RoutingTableEntry(Ptr<NetDevice> dev,
       m_flag(VALID),
       m_reqCount(0),
       m_blackListState(false),
-      m_blackListTimeout(Simulator::Now())
+      m_blackListTimeout(Simulator::Now()),
+      m_NeighborCount(NeighborCount)
 {
     m_ipv4Route = Create<Ipv4Route>();
     m_ipv4Route->SetDestination(dst);

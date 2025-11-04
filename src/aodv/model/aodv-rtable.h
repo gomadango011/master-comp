@@ -69,7 +69,8 @@ class RoutingTableEntry
                       Ipv4InterfaceAddress iface = Ipv4InterfaceAddress(),
                       uint16_t hops = 0,
                       Ipv4Address nextHop = Ipv4Address(),
-                      Time lifetime = Simulator::Now());
+                      Time lifetime = Simulator::Now(),
+                      uint32_t NeighborCount = 0);
 
     ~RoutingTableEntry();
 
@@ -347,6 +348,18 @@ class RoutingTableEntry
         return m_blackListTimeout;
     }
 
+    //隣接ノードの隣接ノード数を設定
+    void SetNeighborCount(uint32_t count)
+    {
+        m_NeighborCount = count;
+    }
+    
+    //隣接ノードの隣接ノード数を取得
+    uint32_t GetNeighborCount() const
+    {
+        return m_NeighborCount;
+    }
+
     /// RREP_ACK timer
     Timer m_ackTimer;
 
@@ -403,6 +416,9 @@ class RoutingTableEntry
     bool m_blackListState;
     /// Time for which the node is put into the blacklist
     Time m_blackListTimeout;
+
+    ///隣接ノードの隣接ノード数
+    uint32_t m_NeighborCount;
 };
 
 /**
@@ -525,9 +541,12 @@ class RoutingTable
      */
     void Print(Ptr<OutputStreamWrapper> stream, Time::Unit unit = Time::S) const;
 
-  private:
     /// The routing table
     std::map<Ipv4Address, RoutingTableEntry> m_ipv4AddressEntry;
+
+  private:
+    /// The routing table
+    // std::map<Ipv4Address, RoutingTableEntry> m_ipv4AddressEntry;
     /// Deletion time for invalid routes
     Time m_badLinkLifetime;
     /**

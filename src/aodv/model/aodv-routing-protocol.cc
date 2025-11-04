@@ -2052,7 +2052,8 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
                 /*iface=*/m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0),
                 /*hops=*/1,
                 /*nextHop=*/rrepHeader.GetDst(),
-                /*lifetime=*/rrepHeader.GetLifeTime());
+                /*lifetime=*/rrepHeader.GetLifeTime(),
+                /*隣接ノードの隣接ノード数*/rrepHeader.GetNeighborCount());
             m_routingTable.AddRoute(newEntry);
         }
         else
@@ -2066,6 +2067,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
             toNeighbor.SetInterface(m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0));
             toNeighbor.SetHop(1);
             toNeighbor.SetNextHop(rrepHeader.GetDst());
+            toNeighbor.SetNeighborCount(rrepHeader.GetNeighborCount());
             m_routingTable.Update(toNeighbor);
         }
 
@@ -2425,6 +2427,30 @@ RoutingProtocol::SendHello()
      *   Hop Count                      0
      *   Lifetime                       AllowedHelloLoss * HelloInterval
      */
+
+    //隣接ノード数を取得
+    uint32_t neigborCount = m_nb.GetNeighborCount();
+    NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal() << " の隣接ノード数: " << neigborCount);
+    
+    
+    //隣接ノード数の平均隣接ノード数を取得
+    uint32_t totalNeighborCount = 0;
+
+    for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
+     it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
+    {
+        const RoutingTableEntry& e = it->second;
+        if (e.GetHop() == 1 && e.GetFlag() == VALID)
+        {
+            NS_LOG_UNCOND("1-hop neighbor: " << e.GetDestination());
+            totalNeighborCount += e.GetNeighborCount();
+        }
+    }
+
+    //隣接ノード比率を計算
+    float neighborRatio = totalNeighborCount > 0 ? static_cast<double>(neigborCount) / totalNeighborCount : 0.0;
+    NS_LOG_DEBUG("隣接ノード比率: " << neighborRatio);
+
     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
     {
         Ptr<Socket> socket = j->first;
@@ -2434,7 +2460,10 @@ RoutingProtocol::SendHello()
                                /*dst=*/iface.GetLocal(),
                                /*dstSeqNo=*/m_seqNo,
                                /*origin=*/iface.GetLocal(),
-                               /*lifetime=*/Time(m_allowedHelloLoss * m_helloInterval));
+                               /*lifetime=*/Time(m_allowedHelloLoss * m_helloInterval),
+                               /*whForwardFlag=*/0,//通常のHelloメッセージとして設定
+                                /*neighborCount=*/neigborCount,
+                                /*neighborRatio=*/neighborRatio); 
         Ptr<Packet> packet = Create<Packet>();
         SocketIpTtlTag tag;
         tag.SetTtl(1);
