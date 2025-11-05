@@ -354,6 +354,12 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
     i.WriteHtonU32(m_NeighborCount); // NeighborCountを4バイトとしてシリアル化する
     i.WriteHtonU32(static_cast<uint32_t>(m_NeighborRatio * 10000)); // NeighborRatioを4バイトとしてシリアル化する
+
+    //隣接ノードリストのサイズ分書き込む
+    for (auto addr : m_neighborList)
+    {
+        WriteTo(i, addr);
+    }
 }
 
 uint32_t
@@ -372,6 +378,18 @@ RrepHeader::Deserialize(Buffer::Iterator start)
     m_NeighborCount = i.ReadNtohU32(); // NeighborCountを4バイトとしてデシリアル化する
     m_NeighborRatio = static_cast<float>(i.ReadNtohU32()) / 10000.0f; // NeighborRatioを4バイトとしてデシリアル化する
 
+    //隣接ノード比率がしきい値以上の場合、隣接ノードリストを読み込む
+    if (m_NeighborRatio >= 1.2) 
+    {
+        m_neighborList.clear();
+        for (uint32_t idx = 0; idx < m_NeighborCount; ++idx)
+        {
+            Ipv4Address neighborAddr;
+            ReadFrom(i, neighborAddr);
+            m_neighborList.push_back(neighborAddr);
+        }
+    }
+    
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
     return dist;

@@ -169,7 +169,8 @@ RoutingProtocol::RoutingProtocol()
       m_htimer(Timer::CANCEL_ON_DESTROY),
       m_rreqRateLimitTimer(Timer::CANCEL_ON_DESTROY),
       m_rerrRateLimitTimer(Timer::CANCEL_ON_DESTROY),
-      m_lastBcastTime()
+      m_lastBcastTime(),
+      m_whNeighborThreshold(1.2f) //隣接ノード比率のしきい値を初期化
 {
     m_nb.SetCallback(MakeCallback(&RoutingProtocol::SendRerrWhenBreaksLinkToNextHop, this));
 }
@@ -2075,6 +2076,14 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
         {
             m_nb.Update(rrepHeader.GetDst(), Time(m_allowedHelloLoss * m_helloInterval));
         }
+
+        //受信したhelloパケットの隣接ノード比率が閾値を下回る場合、WH攻撃検知を開始
+        if(rrepHeader.GetNeighborRatio() < m_whNeighborThreshold)
+        {
+            NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst());
+            
+            SendNeighborList_Req(rrepHeader.GetDst());
+        }
     }
     
     //内部WH攻撃
@@ -2241,6 +2250,14 @@ RoutingProtocol::ForwardHelloToPartner(const RrepHeader& rrepHeader,
 
     NS_LOG_DEBUG("Forwarded Hello message from " << rrepHeader.GetDst()
                                                  << " to WH partner " << toPartner.GetDestination());
+}
+
+void
+RoutingProtocol::SendNeighborList_Req(Ipv4Address suspectNode)
+{
+    NS_LOG_FUNCTION(this);
+    //ここにNeighbor List Requestメッセージの生成と送信コードを追加
+    NS_LOG_DEBUG("Sending Neighbor List Request to " << suspectNode);
 }
 
 // //内部WH攻撃 helloメッセージ転送関数（中継ノード用）

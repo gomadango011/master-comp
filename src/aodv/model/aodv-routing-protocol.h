@@ -280,6 +280,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     /// Number of RERRs used for RERR rate control
     uint16_t m_rerrCount;
 
+    //隣接ノード比率のしきい値
+    float m_whNeighborThreshold;
+
   private:
     /// Start protocol operation
     void Start();
@@ -369,6 +372,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
 
     //内部WH攻撃　中継ノードによるhelloメッセージの転送
     void ForwardHelloByIntermediateNode(const RrepHeader& rrepHeader);
+
+    //内部WH攻撃　WH攻撃検知開始 →　隣接ノードリスト要求メッセージ送信
+    void SendNeighborList_Req(Ipv4Address suspectNode);
     /**
      * Create loopback route for given header
      *

@@ -387,7 +387,8 @@ class RrepHeader : public Header
                Time lifetime = MilliSeconds(0),
                uint8_t WHForwardFlag = 0,
                uint32_t NeighborCount = 0,
-               float NeighborRatio = 0.0);
+               float NeighborRatio = 0.0
+               );
     /**
      * @brief Get the type ID.
      * @return the object TypeId
@@ -515,6 +516,17 @@ class RrepHeader : public Header
         return m_NeighborRatio;
     }
 
+    //隣接ノードリストを設定・取得
+    void SetNeighborList(const Ipv4Address neighborNode)
+    {
+        m_neighborList.push_back(neighborNode);
+    }
+
+    const std::vector<Ipv4Address>& GetNeighborList() const
+    {
+        return m_neighborList;
+    }
+
     // Flags
     /**
      * @brief Set the ack required flag
@@ -564,6 +576,7 @@ class RrepHeader : public Header
     uint8_t m_WHForwardFlag; ///< 内部WH攻撃用転送フラグ
     uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
     float m_NeighborRatio;    ///< 隣接ノード比率
+    std::vector<Ipv4Address> m_neighborList; ///< 隣接ノードリスト
 };
 
 /**
