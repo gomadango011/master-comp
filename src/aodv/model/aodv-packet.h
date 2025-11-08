@@ -378,6 +378,7 @@ class RrepHeader : public Header
      *                      3 : 再ブロードキャスト後のパケット
      * @param NeighborCount 隣接ノードの隣接ノード数（0）
      * @param NeighborRatio 隣接ノード比率（0.0）
+     * @param neighborList 隣接ノードリスト（空リスト）
      */
     RrepHeader(uint8_t prefixSize = 0,
                uint8_t hopCount = 0,
@@ -387,7 +388,8 @@ class RrepHeader : public Header
                Time lifetime = MilliSeconds(0),
                uint8_t WHForwardFlag = 0,
                uint32_t NeighborCount = 0,
-               float NeighborRatio = 0.0
+               float NeighborRatio = 0.0,
+               std::vector<Ipv4Address> neighborList = std::vector<Ipv4Address>()
                );
     /**
      * @brief Get the type ID.
@@ -517,9 +519,9 @@ class RrepHeader : public Header
     }
 
     //隣接ノードリストを設定・取得
-    void SetNeighborList(const Ipv4Address neighborNode)
+    void SetNeighborList(const std::vector<Ipv4Address> neighborNodeList)
     {
-        m_neighborList.push_back(neighborNode);
+        m_neighborList = neighborNodeList;
     }
 
     const std::vector<Ipv4Address>& GetNeighborList() const

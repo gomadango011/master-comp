@@ -166,11 +166,12 @@ RoutingProtocol::RoutingProtocol()
       m_nb(m_helloInterval),
       m_rreqCount(0),
       m_rerrCount(0),
+      m_whNeighborThreshold(1.2f), //隣接ノード比率のしきい値を初期化
       m_htimer(Timer::CANCEL_ON_DESTROY),
       m_rreqRateLimitTimer(Timer::CANCEL_ON_DESTROY),
       m_rerrRateLimitTimer(Timer::CANCEL_ON_DESTROY),
-      m_lastBcastTime(),
-      m_whNeighborThreshold(1.2f) //隣接ノード比率のしきい値を初期化
+      m_lastBcastTime()
+      
 {
     m_nb.SetCallback(MakeCallback(&RoutingProtocol::SendRerrWhenBreaksLinkToNextHop, this));
 }
@@ -2450,8 +2451,9 @@ RoutingProtocol::SendHello()
     NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal() << " の隣接ノード数: " << neigborCount);
     
     
-    //隣接ノード数の平均隣接ノード数を取得
-    uint32_t totalNeighborCount = 0;
+    //隣接ノード数の平均隣接ノード数と、自身の隣接ノードをリストアップ
+    uint32_t totalNeighborCount = 0;  //全隣接ノードの隣接ノード数の合計
+    std::vector<Ipv4Address> neighborList; //自身の隣接ノードリスト
 
     for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
      it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
@@ -2459,14 +2461,17 @@ RoutingProtocol::SendHello()
         const RoutingTableEntry& e = it->second;
         if (e.GetHop() == 1 && e.GetFlag() == VALID)
         {
-            NS_LOG_UNCOND("1-hop neighbor: " << e.GetDestination());
+            NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination() 
+                          << "隣接ノードの隣接ノード数：" << e.GetNeighborCount());
             totalNeighborCount += e.GetNeighborCount();
+            neighborList.push_back(e.GetDestination());
         }
     }
 
     //隣接ノード比率を計算
     float neighborRatio = totalNeighborCount > 0 ? static_cast<double>(neigborCount) / totalNeighborCount : 0.0;
     NS_LOG_DEBUG("隣接ノード比率: " << neighborRatio);
+    
 
     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
     {
@@ -2480,7 +2485,12 @@ RoutingProtocol::SendHello()
                                /*lifetime=*/Time(m_allowedHelloLoss * m_helloInterval),
                                /*whForwardFlag=*/0,//通常のHelloメッセージとして設定
                                 /*neighborCount=*/neigborCount,
-                                /*neighborRatio=*/neighborRatio); 
+                                /*neighborRatio=*/neighborRatio);
+        //隣接ノード比率が閾値を上回る場合、隣接ノードリストをHelloメッセージに含める
+        if(neighborRatio >= 1.2)
+        {
+            helloHeader.SetNeighborList(neighborList); //隣接ノードリストを設定
+        }
         Ptr<Packet> packet = Create<Packet>();
         SocketIpTtlTag tag;
         tag.SetTtl(1);

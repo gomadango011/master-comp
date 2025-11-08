@@ -300,7 +300,8 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
                        Time lifeTime,
                        uint8_t WHForwardFlag,
                        uint32_t NeighborCount,
-                       float NeighborRatio)
+                       float NeighborRatio,
+                       std::vector<Ipv4Address> neighborList)
     : m_flags(0),
       m_prefixSize(prefixSize),
       m_hopCount(hopCount),
@@ -309,7 +310,8 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
       m_origin(origin),
       m_WHForwardFlag(WHForwardFlag),
       m_NeighborCount(NeighborCount),
-      m_NeighborRatio(NeighborRatio)
+      m_NeighborRatio(NeighborRatio),
+      m_neighborList(neighborList)
 {
     m_lifeTime = uint32_t(lifeTime.GetMilliSeconds());
 }
@@ -335,10 +337,13 @@ RrepHeader::GetInstanceTypeId() const
 uint32_t
 RrepHeader::GetSerializedSize() const
 {
+    uint32_t neighborListSize = m_neighborList.size() * 4; //隣接ノードリストのサイズ（IPv4アドレスは4バイト）
+
     return 19 
     + 1 /*WHForwardFlag*/ 
     + 4 /*NeighborCount*/
-    + 4 /*NeighborRatio*/; 
+    + 4 /*NeighborRatio*/
+    + neighborListSize; //隣接ノードリストのサイズを加算;
 }
 
 void
