@@ -2083,7 +2083,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
         {
             NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst());
             
-            SendNeighborList_Req(rrepHeader.GetDst());
+            SendNeighborList_Req(rrepHeader);
         }
     }
     
@@ -2254,11 +2254,65 @@ RoutingProtocol::ForwardHelloToPartner(const RrepHeader& rrepHeader,
 }
 
 void
-RoutingProtocol::SendNeighborList_Req(Ipv4Address suspectNode)
+RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader)
 {
+    
     NS_LOG_FUNCTION(this);
     //ここにNeighbor List Requestメッセージの生成と送信コードを追加
-    NS_LOG_DEBUG("Sending Neighbor List Request to " << suspectNode);
+    NS_LOG_DEBUG("排他的隣接ノードを作成し検知対象ノード（" << rrepHeader.GetDst() << "）へ、別経路作成用のRequestメッセージを送信します。");
+
+
+    //排他的隣接ノードリストを作成
+    std::vector<Ipv4Address> exclusiveNeighbors;   //排他的隣接ノードリスト
+    std::vector<Ipv4Address> targetNeighborList = rrepHeader.GetNeighborList(); //検知対象ノードの隣接ノードリスト
+
+    for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
+     it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
+    {
+        const RoutingTableEntry& e = it->second;
+        if (e.GetHop() == 1 && e.GetFlag() == VALID)
+        {
+            //自身の隣接ノードであり、検知対象ノードの隣接ノードではない場合、排他的隣接ノードとしてリストに追加
+            auto result = std::find(targetNeighborList.begin(), targetNeighborList.end(), e.GetDestination());
+            if(result == targetNeighborList.end())
+            {
+                NS_LOG_DEBUG("排他的隣接ノードを追加: " << e.GetDestination());
+                exclusiveNeighbors.push_back(e.GetDestination());
+            }
+            
+        }
+    }
+
+    // //排他的隣接ノードに別経路を構築してもらうためのRequestメッセージを送信
+    // for(auto it = exclusiveNeighbors.begin(); it != exclusiveNeighbors.end(); ++it)
+    // {
+    //     Ipv4Address exNeighbor = *it;
+    //     NS_LOG_DEBUG("排他的隣接ノード" << exNeighbor << "に別経路構築用のRequestメッセージを送信します。");
+
+    //     RreqHeader rreqHeader(
+    //         /*flags=*/0,
+    //         /*hopCount=*/0,
+    //         /*rreqId=*/GetNextRreqId(),
+    //         /*dst=*/rrepHeader.GetDst(),
+    //         /*dstSeqNo=*/0, //未知のシーケンス番号として0を設定
+    //         /*origin=*/m_mainAddress,
+    //         /*originSeqNo=*/m_seqNo,
+    //         /*lifetime=*/m_netDiameter * m_nodeTraversalTime);
+
+    //     Ptr<Packet> packet = Create<Packet>();
+    //     SocketIpTtlTag tag;
+    //     tag.SetTtl(m_netDiameter);
+    //     packet->AddPacketTag(tag);
+    //     packet->AddHeader(rreqHeader);
+    //     TypeHeader tHeader(AODVTYPE_RREQ);
+    //     packet->AddHeader(tHeader);
+
+    //     Ptr<Socket> socket = FindSocketWithInterfaceAddress(
+    //         m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(exNeighbor), 0));
+    //     NS_ASSERT(socket);
+    //     socket->SendTo(packet, 0, InetSocketAddress(exNeighbor, AODV_PORT));
+    // }
+
 }
 
 // //内部WH攻撃 helloメッセージ転送関数（中継ノード用）
@@ -2487,7 +2541,7 @@ RoutingProtocol::SendHello()
                                 /*neighborCount=*/neigborCount,
                                 /*neighborRatio=*/neighborRatio);
         //隣接ノード比率が閾値を上回る場合、隣接ノードリストをHelloメッセージに含める
-        if(neighborRatio >= 1.2)
+        if(neighborRatio >= m_whNeighborThreshold)
         {
             helloHeader.SetNeighborList(neighborList); //隣接ノードリストを設定
         }

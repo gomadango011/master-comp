@@ -729,6 +729,240 @@ class RerrHeader : public Header
  */
 std::ostream& operator<<(std::ostream& os, const RerrHeader&);
 
+
+//排他的隣接ノードに別経路を構築してもらうためのリクエストヘッダ
+/**
+* @ingroup aodv
+* @brief   Route Request (RREQ) Message Format
+  \verbatim
+  0                   1                   2                   3
+  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |     Type      |J|R|G|D|U|   Reserved          |   Hop Count   |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |                            RREQ ID                            |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |                    Destination IP Address                     |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |                  Destination Sequence Number                  |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |                    Originator IP Address                      |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  |                  Originator Sequence Number                   |
+  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+  \endverbatim
+*/
+class RreqHeader : public Header
+{
+  public:
+    /**
+     * constructor
+     *
+     * @param flags the message flags (0)
+     * @param reserved the reserved bits (0)
+     * @param hopCount the hop count
+     * @param requestID the request ID
+     * @param dst the destination IP address
+     * @param dstSeqNo the destination sequence number
+     * @param origin the origin IP address
+     * @param originSeqNo the origin sequence number
+     * @param WHForwardFlag 内部WH攻撃用転送フラグ（0） 0:通常パケット
+     *                      1 : 10,0,0,2 → 10,0,0,3へ転送するパケット
+     *                      2 : 10,0,0,3 → 10,0,0,2へ転送するパケット
+     *                      3 : 再ブロードキャスト後のパケット
+     */
+    RreqHeader(uint8_t flags = 0,
+               uint8_t reserved = 0,
+               uint8_t hopCount = 0,
+               uint32_t requestID = 0,
+               Ipv4Address dst = Ipv4Address(),
+               uint32_t dstSeqNo = 0,
+               Ipv4Address origin = Ipv4Address(),
+               uint32_t originSeqNo = 0,
+               uint8_t WHForwardFlag = 0);
+
+    /**
+     * @brief Get the type ID.
+     * @return the object TypeId
+     */
+    static TypeId GetTypeId();
+    TypeId GetInstanceTypeId() const override;
+    uint32_t GetSerializedSize() const override;
+    void Serialize(Buffer::Iterator start) const override;
+    uint32_t Deserialize(Buffer::Iterator start) override;
+    void Print(std::ostream& os) const override;
+
+    // Fields
+    /**
+     * @brief Set the hop count
+     * @param count the hop count
+     */
+    void SetHopCount(uint8_t count)
+    {
+        m_hopCount = count;
+    }
+
+    /**
+     * @brief Get the hop count
+     * @return the hop count
+     */
+    uint8_t GetHopCount() const
+    {
+        return m_hopCount;
+    }
+
+    /**
+     * @brief Set the request ID
+     * @param id the request ID
+     */
+    void SetId(uint32_t id)
+    {
+        m_requestID = id;
+    }
+
+    /**
+     * @brief Get the request ID
+     * @return the request ID
+     */
+    uint32_t GetId() const
+    {
+        return m_requestID;
+    }
+
+    /**
+     * @brief Set the destination address
+     * @param a the destination address
+     */
+    void SetDst(Ipv4Address a)
+    {
+        m_dst = a;
+    }
+
+    /**
+     * @brief Get the destination address
+     * @return the destination address
+     */
+    Ipv4Address GetDst() const
+    {
+        return m_dst;
+    }
+
+    /**
+     * @brief Set the destination sequence number
+     * @param s the destination sequence number
+     */
+    void SetDstSeqno(uint32_t s)
+    {
+        m_dstSeqNo = s;
+    }
+
+    /**
+     * @brief Get the destination sequence number
+     * @return the destination sequence number
+     */
+    uint32_t GetDstSeqno() const
+    {
+        return m_dstSeqNo;
+    }
+
+    /**
+     * @brief Set the origin address
+     * @param a the origin address
+     */
+    void SetOrigin(Ipv4Address a)
+    {
+        m_origin = a;
+    }
+
+    /**
+     * @brief Get the origin address
+     * @return the origin address
+     */
+    Ipv4Address GetOrigin() const
+    {
+        return m_origin;
+    }
+
+    /**
+     * @brief Set the origin sequence number
+     * @param s the origin sequence number
+     */
+    void SetOriginSeqno(uint32_t s)
+    {
+        m_originSeqNo = s;
+    }
+
+    /**
+     * @brief Get the origin sequence number
+     * @return the origin sequence number
+     */
+    uint32_t GetOriginSeqno() const
+    {
+        return m_originSeqNo;
+    }
+
+    //内部WH WHノード間転送フラグ 設定・取得
+    void SetWHForwardFlag(uint8_t f)
+    {
+        m_WHForwardFlag = f;
+    }
+
+    uint8_t GetWHForwardFlag() const
+    {
+        return m_WHForwardFlag;
+    }
+
+    // Flags
+    /**
+     * @brief Set the gratuitous RREP flag
+     * @param f the gratuitous RREP flag
+     */
+    void SetGratuitousRrep(bool f);
+    /**
+     * @brief Get the gratuitous RREP flag
+     * @return the gratuitous RREP flag
+     */
+    bool GetGratuitousRrep() const;
+    /**
+     * @brief Set the Destination only flag
+     * @param f the Destination only flag
+     */
+    void SetDestinationOnly(bool f);
+    /**
+     * @brief Get the Destination only flag
+     * @return the Destination only flag
+     */
+    bool GetDestinationOnly() const;
+    /**
+     * @brief Set the unknown sequence number flag
+     * @param f the unknown sequence number flag
+     */
+    void SetUnknownSeqno(bool f);
+    /**
+     * @brief Get the unknown sequence number flag
+     * @return the unknown sequence number flag
+     */
+    bool GetUnknownSeqno() const;
+
+    /**
+     * @brief Comparison operator
+     * @param o RREQ header to compare
+     * @return true if the RREQ headers are equal
+     */
+    bool operator==(const RreqHeader& o) const;
+
+  private:
+    uint8_t m_flags;        ///< |J|R|G|D|U| bit flags, see RFC
+    uint8_t m_reserved;     ///< Not used (must be 0)
+    uint8_t m_hopCount;     ///< Hop Count
+    uint32_t m_requestID;   ///< RREQ ID
+    Ipv4Address m_dst;      ///< Destination IP Address
+    uint32_t m_dstSeqNo;    ///< Destination Sequence Number
+    Ipv4Address m_origin;   ///< Originator IP Address
+    uint32_t m_originSeqNo; ///< Source Sequence Number
+    uint8_t m_WHForwardFlag;///< 内部WH攻撃用転送フラグ
+};
+
 } // namespace aodv
 } // namespace ns3
 
