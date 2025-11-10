@@ -1248,6 +1248,10 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
         RecvReplyAck(sender);
         break;
     }
+    case AODVTYPE_DetectionReq: {
+        // RecvDetectionReq();
+        break;
+    }
     }
 }
 
@@ -2083,7 +2087,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
         {
             NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst());
             
-            SendNeighborList_Req(rrepHeader);
+            SendDetectionReq_to_ExNeighbors(rrepHeader);
         }
     }
     
@@ -2253,6 +2257,7 @@ RoutingProtocol::ForwardHelloToPartner(const RrepHeader& rrepHeader,
                                                  << " to WH partner " << toPartner.GetDestination());
 }
 
+//WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
 void
 RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader)
 {

@@ -70,7 +70,8 @@ TypeHeader::Deserialize(Buffer::Iterator start)
     case AODVTYPE_RREQ:
     case AODVTYPE_RREP:
     case AODVTYPE_RERR:
-    case AODVTYPE_RREP_ACK: {
+    case AODVTYPE_RREP_ACK: 
+    case AODVTYPE_DetectionReq:{
         m_type = (MessageType)type;
         break;
     }
@@ -101,6 +102,10 @@ TypeHeader::Print(std::ostream& os) const
     }
     case AODVTYPE_RREP_ACK: {
         os << "RREP_ACK";
+        break;
+    }
+    case AODVTYPE_DetectionReq: {
+        os << "DetectionReq";
         break;
     }
     default:
@@ -714,6 +719,122 @@ RerrHeader::operator==(const RerrHeader& o) const
 
 std::ostream&
 operator<<(std::ostream& os, const RerrHeader& h)
+{
+    h.Print(os);
+    return os;
+}
+
+//-----------------------------------------------------------------------------
+// DetectionRreqHeader
+//-----------------------------------------------------------------------------
+
+DetectionRreqHeader::DetectionRreqHeader(Ipv4Address origin ,
+                                         Ipv4Address target,
+                                         std::vector<Ipv4Address> ExneighborList,
+                                         std::vector<Ipv4Address> targetNeighborList
+                                        )
+    : m_reserved(0),
+      m_origin(origin),
+      m_target(target),
+      m_ExneighborList(ExneighborList),
+      m_targetNeighborList(targetNeighborList)
+{
+}
+
+NS_OBJECT_ENSURE_REGISTERED(DetectionRreqHeader);
+
+TypeId
+DetectionRreqHeader::GetTypeId()
+{
+    static TypeId tid = TypeId("ns3::aodv::DetectionRreqHeader")
+                            .SetParent<Header>()
+                            .SetGroupName("Aodv")
+                            .AddConstructor<DetectionRreqHeader>();
+    return tid;
+}
+
+TypeId
+DetectionRreqHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+uint32_t
+DetectionRreqHeader::GetSerializedSize() const
+{
+    return 1
+           +4 /*送信元IPアドレス*/
+           +4 /*検知対象のIPアドレス*/
+           +2 /*排他的隣接ノードリストのサイズ*/
+           +2 /*検知対象ノードの隣接ノードリストのサイズ*/
+           +4 * m_ExneighborList.size() /*排他的隣接ノードリスト*/
+           +4 * m_targetNeighborList.size(); /*検知対象ノードの隣接ノードリスト*/
+}
+
+void
+DetectionRreqHeader::Serialize(Buffer::Iterator i) const
+{
+    i.WriteU8(m_reserved);
+    WriteTo(i, m_origin);
+    WriteTo(i, m_target);
+
+    i.WriteHtolsbU16(m_ExneighborList.size());
+    i.WriteHtolsbU16(m_targetNeighborList.size());
+
+    for (auto addr : m_ExneighborList)
+        WriteTo(i, addr);
+    for (auto addr : m_targetNeighborList)
+        WriteTo(i, addr);
+}
+
+uint32_t
+DetectionRreqHeader::Deserialize(Buffer::Iterator start)
+{
+    Buffer::Iterator i = start;
+    m_reserved = i.ReadU8();
+    ReadFrom(i, m_origin);
+    ReadFrom(i, m_target);
+
+    uint16_t exSize = i.ReadNtohU16();
+    uint16_t targetSize = i.ReadNtohU16();
+
+    m_ExneighborList.clear();
+    m_targetNeighborList.clear();
+
+    for (uint16_t k = 0; k < exSize; ++k)
+    {
+        Ipv4Address addr;
+        ReadFrom(i, addr);
+        m_ExneighborList.push_back(addr);
+    }
+
+    for (uint16_t k = 0; k < targetSize; ++k)
+    {
+        Ipv4Address addr;
+        ReadFrom(i, addr);
+        m_targetNeighborList.push_back(addr);
+    }
+
+    uint32_t dist = i.GetDistanceFrom(start);
+    NS_ASSERT(dist == GetSerializedSize());
+    return dist;
+}
+
+void
+DetectionRreqHeader::Print(std::ostream& os) const
+{
+    os << "送信元アドレス" << m_origin << "検知対象ノード" << m_target;
+}
+
+bool
+DetectionRreqHeader::operator==(const DetectionRreqHeader& o) const
+{
+    return m_reserved == o.m_reserved && m_origin == o.m_origin && m_target == o.m_target &&
+           m_ExneighborList == o.m_ExneighborList && m_targetNeighborList == o.m_targetNeighborList;
+}
+
+std::ostream&
+operator<<(std::ostream& os, const DetectionRreqHeader& h)
 {
     h.Print(os);
     return os;
