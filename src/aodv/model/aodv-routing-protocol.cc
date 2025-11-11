@@ -1463,6 +1463,22 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
                           << static_cast<uint32_t>(rreqHeader.GetHopCount()) << " ID "
                           << rreqHeader.GetId() << " to destination " << rreqHeader.GetDst());
 
+    //別経路作成用のRREQを受信した場合、(1)検知対象ノードもしくは、その隣接ノードがメッセージを受信した場合，メッセージを破棄
+    if(rreqHeader.GetAnotherRouteCreateFlag())
+    {
+        //排除ノードリスト
+        std::vector<Ipv4Address> excludedList = rreqHeader.GetExcludedList();
+        for (auto addr : excludedList)
+        {
+            if (addr == receiver)
+            {
+                NS_LOG_DEBUG("別経路RREQドロップ: ノード(" << receiver
+                            << ") は検知対象またはその隣接ノード（ExcludedList内）");
+                return; // パケットを破棄して終了
+            }
+        }
+    }
+
     //  A node generates a RREP if either:
     //  (i)  it is itself the destination,
     if (IsMyOwnAddress(rreqHeader.GetDst()))
@@ -2082,10 +2098,11 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
             m_nb.Update(rrepHeader.GetDst(), Time(m_allowedHelloLoss * m_helloInterval));
         }
 
-        //受信したhelloパケットの隣接ノード比率が閾値を下回る場合、WH攻撃検知を開始
-        if(rrepHeader.GetNeighborRatio() < m_whNeighborThreshold)
+        //受信したhelloパケットの隣接ノード比率が閾値を上回る場合、WH攻撃検知を開始
+        if(rrepHeader.GetNeighborRatio() > m_whNeighborThreshold)
         {
-            NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst());
+            NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst()
+                            << "隣接ノード比率" << rrepHeader.GetNeighborRatio());
             
             SendDetectionReq_to_ExNeighbors(rrepHeader, receiver);
         }
@@ -2309,8 +2326,18 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
         TypeHeader tHeader(AODVTYPE_DetectionReq);
         packet->AddHeader(tHeader);
 
-        Ptr<Socket> socket = FindSocketWithInterfaceAddress(
-            m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(exNeighbor), 0));
+        // ★ receiver(=この関数を呼んだ時にHelloを受け取った自ノードのIP)のIFで送る
+        int32_t ifIndex = m_ipv4->GetInterfaceForAddress(receiver);
+        if (ifIndex < 0)
+        {
+            NS_LOG_ERROR("No interface found for receiver=" << receiver
+                         << " at node " << m_ipv4->GetObject<Node>()->GetId());
+            continue;
+        }
+        Ipv4InterfaceAddress outIf = m_ipv4->GetAddress(static_cast<uint32_t>(ifIndex), 0);
+        Ptr<Socket> socket = FindSocketWithInterfaceAddress(outIf);
+
+        //Ptr<Socket> socket = FindSocketWithInterfaceAddress(m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(exNeighbor), 0));
         NS_ASSERT(socket);
         socket->SendTo(packet, 0, InetSocketAddress(exNeighbor, AODV_PORT));
     }
@@ -2324,10 +2351,76 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
     NS_LOG_FUNCTION(this);
     DetectionRreqHeader detectionrq;
     p->RemoveHeader(detectionrq);
-    NS_LOG_DEBUG("（"src << "）⇨（" receiver"）に検知対象（"<< detectionrq.GetTarget() <<"）の別経路要求メッセージが送信されました。");
+    NS_LOG_DEBUG("（" << src << "）⇨（" << receiver
+                 << "） 検知対象=" << detectionrq.GetTarget()
+                 << " の別経路要求(DetectionReq)を受信");
+    std::vector<Ipv4Address> excludedList = detectionrq.GetTargetNeighborList();
+    excludedList.push_back(detectionrq.GetTarget());
 
-    //自身以外の排他的隣接ノードに別経路要求メッセージを送信
-    
+    //自ノード以外の排他的隣接ノードに別経路要求メッセージを送信
+    for(auto dst : detectionrq.GetExneighborList())
+    {
+        if(dst == receiver)
+        {
+            continue;
+        }
+
+        // RREQを設定
+        //メッセージヘッダを作成
+        RreqHeader rreqHeader;
+        rreqHeader.SetDstSeqno(0);
+        rreqHeader.SetHopCount(0);
+        rreqHeader.SetOrigin(receiver);
+        rreqHeader.SetGratuitousRrep(false);
+        rreqHeader.SetDestinationOnly(true);
+        rreqHeader.SetUnknownSeqno(true);
+        rreqHeader.SetAnotherRouteCreateFlag(true);
+        rreqHeader.SetExcludedList(excludedList);
+        rreqHeader.SetDst(dst);
+        //RREQIDを設定
+        rreqHeader.SetId(m_requestId++);
+
+        Ptr<Packet> packet = Create<Packet>();
+        SocketIpTtlTag tag;
+        tag.SetTtl(5);
+        packet->AddPacketTag(tag);
+        packet->AddHeader(rreqHeader);
+        TypeHeader tHeader(AODVTYPE_RREQ);
+        packet->AddHeader(tHeader);
+
+        //別経路作成用のRREQをブロードキャスト
+        for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
+        {
+            Ptr<Socket> socket = j->first;
+            Ipv4InterfaceAddress iface = j->second;
+
+            rreqHeader.SetOrigin(iface.GetLocal());
+            Ipv4Address destination;
+            if (iface.GetMask() == Ipv4Mask::GetOnes())
+            {
+                destination = Ipv4Address("255.255.255.255");
+            }
+            else
+            {
+                destination = iface.GetBroadcast();
+            }
+
+            NS_LOG_DEBUG("別経路RREQを送信： " << iface.GetLocal()
+                         << " -> " << destination
+                         << " (宛先EA=" << dst << ") TTL=5");
+            
+            //socket->SetIpTtl(5); // ★確実なTTL制御
+            
+            m_lastBcastTime = Simulator::Now();
+            Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
+                            &RoutingProtocol::SendTo,
+                            this,
+                            socket,
+                            packet,
+                            destination);
+        }
+        
+    }
 }
 
 // //内部WH攻撃 helloメッセージ転送関数（中継ノード用）

@@ -137,7 +137,9 @@ RreqHeader::RreqHeader(uint8_t flags,
                        uint32_t dstSeqNo,
                        Ipv4Address origin,
                        uint32_t originSeqNo,
-                       uint8_t WHForwardFlag)
+                       uint8_t WHForwardFlag,
+                       bool AnotherRouteCreateFlag,
+                       std::vector<Ipv4Address> ExcludedList)
     : m_flags(flags),
       m_reserved(reserved),
       m_hopCount(hopCount),
@@ -146,7 +148,9 @@ RreqHeader::RreqHeader(uint8_t flags,
       m_dstSeqNo(dstSeqNo),
       m_origin(origin),
       m_originSeqNo(originSeqNo),
-      m_WHForwardFlag(WHForwardFlag)
+      m_WHForwardFlag(WHForwardFlag),
+      m_AnotherRouteCreateFlag(AnotherRouteCreateFlag),
+      m_ExcludedList(ExcludedList)
 {
 }
 
@@ -171,7 +175,10 @@ RreqHeader::GetInstanceTypeId() const
 uint32_t
 RreqHeader::GetSerializedSize() const
 {
-    return 23 + 1; // +1 for WHForwardFlag
+    return 23
+            + 1 // +1 for WHForwardFlag
+            + 1 //　別経路構築用のフラグ
+            + 4 * m_ExcludedList.size(); // 除外ノードリスト
 }
 
 void
@@ -187,6 +194,12 @@ RreqHeader::Serialize(Buffer::Iterator i) const
     i.WriteHtonU32(m_originSeqNo);
 
     i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
+    i.WriteU8(m_AnotherRouteCreateFlag); // 別経路作成用のフラグ
+
+    for (auto addr : m_ExcludedList)
+    {
+        WriteTo(i, addr);
+    }
 }
 
 uint32_t
@@ -203,6 +216,15 @@ RreqHeader::Deserialize(Buffer::Iterator start)
     m_originSeqNo = i.ReadNtohU32();
 
     m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
+    m_AnotherRouteCreateFlag = i.ReadU8();
+
+    m_ExcludedList.clear();
+    while (i.GetDistanceFrom(start) < GetSerializedSize())
+    {
+        Ipv4Address addr;
+        ReadFrom(i, addr);
+        m_ExcludedList.push_back(addr);
+    }
 
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
@@ -217,7 +239,7 @@ RreqHeader::Print(std::ostream& os) const
     os << " source: ipv4 " << m_origin << " sequence number " << m_originSeqNo;
     os << " flags: Gratuitous RREP " << (*this).GetGratuitousRrep() << " Destination only "
        << (*this).GetDestinationOnly() << " Unknown sequence number " << (*this).GetUnknownSeqno();
-    os << " WHForwardFlag " << m_WHForwardFlag;
+    os << " WHForwardFlag " << m_WHForwardFlag << "notherRouteCreateFlag" << (int)m_AnotherRouteCreateFlag;
     }
 
 std::ostream&
@@ -290,7 +312,7 @@ RreqHeader::operator==(const RreqHeader& o) const
     return (m_flags == o.m_flags && m_reserved == o.m_reserved && m_hopCount == o.m_hopCount &&
             m_requestID == o.m_requestID && m_dst == o.m_dst && m_dstSeqNo == o.m_dstSeqNo &&
             m_origin == o.m_origin && m_originSeqNo == o.m_originSeqNo &&
-            m_WHForwardFlag == o.m_WHForwardFlag);
+            m_WHForwardFlag == o.m_WHForwardFlag && m_AnotherRouteCreateFlag == o.m_AnotherRouteCreateFlag);
 }
 
 //-----------------------------------------------------------------------------
@@ -778,8 +800,8 @@ DetectionRreqHeader::Serialize(Buffer::Iterator i) const
     WriteTo(i, m_origin);
     WriteTo(i, m_target);
 
-    i.WriteHtolsbU16(m_ExneighborList.size());
-    i.WriteHtolsbU16(m_targetNeighborList.size());
+    i.WriteHtonU16(m_ExneighborList.size());
+    i.WriteHtonU16(m_targetNeighborList.size());
 
     for (auto addr : m_ExneighborList)
         WriteTo(i, addr);

@@ -142,6 +142,8 @@ class RreqHeader : public Header
      *                      1 : 10,0,0,2 → 10,0,0,3へ転送するパケット
      *                      2 : 10,0,0,3 → 10,0,0,2へ転送するパケット
      *                      3 : 再ブロードキャスト後のパケット
+     * @param AnotherRouteCreateFlag  別経路作成用のフラグ
+     * @param ExcludedList  排除ノードのリスト
      */
     RreqHeader(uint8_t flags = 0,
                uint8_t reserved = 0,
@@ -151,7 +153,10 @@ class RreqHeader : public Header
                uint32_t dstSeqNo = 0,
                Ipv4Address origin = Ipv4Address(),
                uint32_t originSeqNo = 0,
-               uint8_t WHForwardFlag = 0);
+               uint8_t WHForwardFlag = 0,
+               bool AnotherRouteCreateFlag = false,
+               std::vector<Ipv4Address> ExcludedList = std::vector<Ipv4Address> ()
+               );
 
     /**
      * @brief Get the type ID.
@@ -284,6 +289,27 @@ class RreqHeader : public Header
         return m_WHForwardFlag;
     }
 
+    //別経路作成用のフラグ
+    void SetAnotherRouteCreateFlag(bool f)
+    {
+        m_AnotherRouteCreateFlag = f;
+    }
+
+    bool GetAnotherRouteCreateFlag() const
+    {
+        return m_AnotherRouteCreateFlag;
+    }
+
+    void SetExcludedList(std::vector<Ipv4Address> Exlist)
+    {
+        m_ExcludedList = Exlist;
+    }
+
+    std::vector<Ipv4Address> GetExcludedList() const
+    {
+        return m_ExcludedList;
+    }
+
     // Flags
     /**
      * @brief Set the gratuitous RREP flag
@@ -333,6 +359,8 @@ class RreqHeader : public Header
     Ipv4Address m_origin;   ///< Originator IP Address
     uint32_t m_originSeqNo; ///< Source Sequence Number
     uint8_t m_WHForwardFlag;///< 内部WH攻撃用転送フラグ
+    bool m_AnotherRouteCreateFlag; ///< 別経路構築用のフラグ
+    std::vector<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
 };
 
 /**
