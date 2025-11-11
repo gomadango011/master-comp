@@ -419,6 +419,11 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     /// Receive  from node with address src
     void RecvError(Ptr<Packet> p, Ipv4Address src);
+
+    /**
+     * 別経路要求メッセージを受信
+     */
+    void RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
     /** @} */
 
     /**

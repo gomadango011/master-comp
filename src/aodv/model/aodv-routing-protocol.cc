@@ -1249,7 +1249,7 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
         break;
     }
     case AODVTYPE_DetectionReq: {
-        // RecvDetectionReq();
+        RecvDetectionReq(packet, receiver, sender);
         break;
     }
     }
@@ -2259,7 +2259,7 @@ RoutingProtocol::ForwardHelloToPartner(const RrepHeader& rrepHeader,
 
 //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
 void
-RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, const IpL4Protocol receiver)
+RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, const Ipv4Address receiver)
 {
     
     NS_LOG_FUNCTION(this);
@@ -2295,24 +2295,18 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
         NS_LOG_DEBUG("排他的隣接ノード" << exNeighbor << "に別経路構築用のRequestメッセージを送信します。");
 
         DetectionRreqHeader DetectionRreqHeader(
-            /*送信元アドレス*/
+            /*送信元アドレス*/receiver,
+            /*検知対象アドレス*/rrepHeader.GetDst(),
+            /*排他的隣接ノードリスト*/exclusiveNeighbors,
+            /*検知対象ノードの隣接ノードリスト*/targetNeighborList
         );
-        RreqHeader rreqHeader(
-            /*flags=*/0,
-            /*hopCount=*/0,
-            /*rreqId=*/GetNextRreqId(),
-            /*dst=*/rrepHeader.GetDst(),
-            /*dstSeqNo=*/0, //未知のシーケンス番号として0を設定
-            /*origin=*/m_mainAddress,
-            /*originSeqNo=*/m_seqNo,
-            /*lifetime=*/m_netDiameter * m_nodeTraversalTime);
 
         Ptr<Packet> packet = Create<Packet>();
         SocketIpTtlTag tag;
-        tag.SetTtl(m_netDiameter);
+        tag.SetTtl(1);
         packet->AddPacketTag(tag);
-        packet->AddHeader(rreqHeader);
-        TypeHeader tHeader(AODVTYPE_RREQ);
+        packet->AddHeader(DetectionRreqHeader);
+        TypeHeader tHeader(AODVTYPE_DetectionReq);
         packet->AddHeader(tHeader);
 
         Ptr<Socket> socket = FindSocketWithInterfaceAddress(
@@ -2321,6 +2315,19 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
         socket->SendTo(packet, 0, InetSocketAddress(exNeighbor, AODV_PORT));
     }
 
+}
+
+//別経路要求メッセージを受信した場合の処理
+void
+RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
+{
+    NS_LOG_FUNCTION(this);
+    DetectionRreqHeader detectionrq;
+    p->RemoveHeader(detectionrq);
+    NS_LOG_DEBUG("（"src << "）⇨（" receiver"）に検知対象（"<< detectionrq.GetTarget() <<"）の別経路要求メッセージが送信されました。");
+
+    //自身以外の排他的隣接ノードに別経路要求メッセージを送信
+    
 }
 
 // //内部WH攻撃 helloメッセージ転送関数（中継ノード用）
