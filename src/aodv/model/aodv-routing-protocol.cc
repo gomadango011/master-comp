@@ -2087,7 +2087,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
         {
             NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst());
             
-            SendDetectionReq_to_ExNeighbors(rrepHeader);
+            SendDetectionReq_to_ExNeighbors(rrepHeader, receiver);
         }
     }
     
@@ -2259,7 +2259,7 @@ RoutingProtocol::ForwardHelloToPartner(const RrepHeader& rrepHeader,
 
 //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
 void
-RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader)
+RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, const IpL4Protocol receiver)
 {
     
     NS_LOG_FUNCTION(this);
@@ -2289,34 +2289,37 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader)
     }
 
     // //排他的隣接ノードに別経路を構築してもらうためのRequestメッセージを送信
-    // for(auto it = exclusiveNeighbors.begin(); it != exclusiveNeighbors.end(); ++it)
-    // {
-    //     Ipv4Address exNeighbor = *it;
-    //     NS_LOG_DEBUG("排他的隣接ノード" << exNeighbor << "に別経路構築用のRequestメッセージを送信します。");
+    for(auto it = exclusiveNeighbors.begin(); it != exclusiveNeighbors.end(); ++it)
+    {
+        Ipv4Address exNeighbor = *it;
+        NS_LOG_DEBUG("排他的隣接ノード" << exNeighbor << "に別経路構築用のRequestメッセージを送信します。");
 
-    //     RreqHeader rreqHeader(
-    //         /*flags=*/0,
-    //         /*hopCount=*/0,
-    //         /*rreqId=*/GetNextRreqId(),
-    //         /*dst=*/rrepHeader.GetDst(),
-    //         /*dstSeqNo=*/0, //未知のシーケンス番号として0を設定
-    //         /*origin=*/m_mainAddress,
-    //         /*originSeqNo=*/m_seqNo,
-    //         /*lifetime=*/m_netDiameter * m_nodeTraversalTime);
+        DetectionRreqHeader DetectionRreqHeader(
+            /*送信元アドレス*/
+        );
+        RreqHeader rreqHeader(
+            /*flags=*/0,
+            /*hopCount=*/0,
+            /*rreqId=*/GetNextRreqId(),
+            /*dst=*/rrepHeader.GetDst(),
+            /*dstSeqNo=*/0, //未知のシーケンス番号として0を設定
+            /*origin=*/m_mainAddress,
+            /*originSeqNo=*/m_seqNo,
+            /*lifetime=*/m_netDiameter * m_nodeTraversalTime);
 
-    //     Ptr<Packet> packet = Create<Packet>();
-    //     SocketIpTtlTag tag;
-    //     tag.SetTtl(m_netDiameter);
-    //     packet->AddPacketTag(tag);
-    //     packet->AddHeader(rreqHeader);
-    //     TypeHeader tHeader(AODVTYPE_RREQ);
-    //     packet->AddHeader(tHeader);
+        Ptr<Packet> packet = Create<Packet>();
+        SocketIpTtlTag tag;
+        tag.SetTtl(m_netDiameter);
+        packet->AddPacketTag(tag);
+        packet->AddHeader(rreqHeader);
+        TypeHeader tHeader(AODVTYPE_RREQ);
+        packet->AddHeader(tHeader);
 
-    //     Ptr<Socket> socket = FindSocketWithInterfaceAddress(
-    //         m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(exNeighbor), 0));
-    //     NS_ASSERT(socket);
-    //     socket->SendTo(packet, 0, InetSocketAddress(exNeighbor, AODV_PORT));
-    // }
+        Ptr<Socket> socket = FindSocketWithInterfaceAddress(
+            m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(exNeighbor), 0));
+        NS_ASSERT(socket);
+        socket->SendTo(packet, 0, InetSocketAddress(exNeighbor, AODV_PORT));
+    }
 
 }
 

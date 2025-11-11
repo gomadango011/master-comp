@@ -374,7 +374,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     void ForwardHelloByIntermediateNode(const RrepHeader& rrepHeader);
 
     //内部WH攻撃　WH攻撃検知開始 →　隣接ノードリスト要求メッセージ送信
-    void SendDetectionReq_to_ExNeighbors(const RrepHeader& rrepHeader);
+    void SendDetectionReq_to_ExNeighbors(const RrepHeader& rrepHeader, const Ipv4Address receiver);
     /**
      * Create loopback route for given header
      *
