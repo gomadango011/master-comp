@@ -558,6 +558,16 @@ class RrepHeader : public Header
         return m_neighborList;
     }
 
+    void SetAnotherRouteCreateFlag(const bool f)
+    {
+        m_AnotherRouteCreateFlag = f;
+    }
+
+    bool GetAnotherRouteCreateFlag()
+    {
+        return m_AnotherRouteCreateFlag;
+    }
+
     // Flags
     /**
      * @brief Set the ack required flag
@@ -608,6 +618,7 @@ class RrepHeader : public Header
     uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
     float m_NeighborRatio;    ///< 隣接ノード比率
     std::vector<Ipv4Address> m_neighborList; ///< 隣接ノードリスト
+    bool m_AnotherRouteCreateFlag;
 };
 
 /**

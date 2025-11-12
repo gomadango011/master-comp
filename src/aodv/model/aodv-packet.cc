@@ -369,6 +369,7 @@ RrepHeader::GetSerializedSize() const
     return 19 
     + 1 /*WHForwardFlag*/ 
     + 4 /*NeighborCount*/
+    + 1 /*AnotherRouteCreateFlag*/
     + 4 /*NeighborRatio*/
     + neighborListSize; //隣接ノードリストのサイズを加算;
 }
@@ -392,6 +393,8 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     {
         WriteTo(i, addr);
     }
+
+    i.WriteU8(m_AnotherRouteCreateFlag);//m_AnotherRouteCreateFlag
 }
 
 uint32_t
@@ -421,6 +424,8 @@ RrepHeader::Deserialize(Buffer::Iterator start)
             m_neighborList.push_back(neighborAddr);
         }
     }
+
+    m_AnotherRouteCreateFlag = i.ReadU8();
     
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
@@ -440,6 +445,7 @@ RrepHeader::Print(std::ostream& os) const
        << " WHForwardFlag " << m_WHForwardFlag
        << " NeighborCount " << m_NeighborCount;
     os << " NeighborRatio " << m_NeighborRatio;
+    os << "別経路作成用のフラグ" << m_AnotherRouteCreateFlag;
 }
 
 void
@@ -492,7 +498,7 @@ RrepHeader::operator==(const RrepHeader& o) const
     return (m_flags == o.m_flags && m_prefixSize == o.m_prefixSize && m_hopCount == o.m_hopCount &&
             m_dst == o.m_dst && m_dstSeqNo == o.m_dstSeqNo && m_origin == o.m_origin &&
             m_lifeTime == o.m_lifeTime && m_WHForwardFlag == o.m_WHForwardFlag && m_NeighborCount == o.m_NeighborCount
-            && m_NeighborRatio == o.m_NeighborRatio);
+            && m_NeighborRatio == o.m_NeighborRatio && m_AnotherRouteCreateFlag == o.m_AnotherRouteCreateFlag);
 }
 
 void
@@ -508,6 +514,7 @@ RrepHeader::SetHello(Ipv4Address origin, uint32_t srcSeqNo, Time lifetime)
     m_WHForwardFlag = 0;
     m_NeighborCount = 0;
     m_NeighborRatio = 0.0;
+    m_AnotherRouteCreateFlag = false;
 }
 
 std::ostream&

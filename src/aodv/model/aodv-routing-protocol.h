@@ -440,7 +440,11 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     /** Send RREQ
      * @param dst destination address
      */
+
+    // 既存の宣言は残す
     void SendRequest(Ipv4Address dst);
+
+    void SendRequest(Ipv4Address dst, bool anothorflag , const std::vector<Ipv4Address> exlist);
     /** Send RREP
      * @param rreqHeader route request header
      * @param toOrigin routing table entry to originator

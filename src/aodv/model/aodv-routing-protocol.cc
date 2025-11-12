@@ -1032,7 +1032,7 @@ RoutingProtocol::LoopbackRoute(const Ipv4Header& hdr, Ptr<NetDevice> oif) const
 }
 
 void
-RoutingProtocol::SendRequest(Ipv4Address dst)
+RoutingProtocol::SendRequest(Ipv4Address dst, bool Anothorflag, std::vector<Ipv4Address> exlist)
 {
     NS_LOG_FUNCTION(this << dst);
     // A node SHOULD NOT originate more than RREQ_RATELIMIT RREQ messages per second.
@@ -1120,6 +1120,17 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
     rreqHeader.SetOriginSeqno(m_seqNo);
     m_requestId++;
     rreqHeader.SetId(m_requestId);
+
+    if(Anothorflag)
+    {
+        Ipv4Address myIP = m_ipv4->GetAddress(1, 0).GetLocal();
+        NS_LOG_DEBUG("（" << myIP << "）⇨（" << dst << "）検知対象ノード：,（" << exlist.back() << "）の別経路探索用のRREQを送信しようとしています。");
+
+        rreqHeader.SetGratuitousRrep(true);
+        rreqHeader.SetDestinationOnly(true);
+        rreqHeader.SetAnotherRouteCreateFlag(true);
+        rreqHeader.SetExcludedList(exlist);
+    }
 
     // Send RREQ as subnet directed broadcast from each interface used by aodv
     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
@@ -1681,6 +1692,13 @@ RoutingProtocol::SendReply(const RreqHeader& rreqHeader, const RoutingTableEntry
                           /*dstSeqNo=*/m_seqNo,
                           /*origin=*/toOrigin.GetDestination(),
                           /*lifetime=*/m_myRouteTimeout);
+
+    //別経路作成用のフラグが立っている場合、RREPにもフラグを立てる
+    if(rreqHeader.GetAnotherRouteCreateFlag())
+    {
+        rrepHeader.SetAnotherRouteCreateFlag(true);
+    }
+    
     Ptr<Packet> packet = Create<Packet>();
     SocketIpTtlTag tag;
     tag.SetTtl(toOrigin.GetHop());
@@ -2365,60 +2383,66 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
             continue;
         }
 
-        // RREQを設定
-        //メッセージヘッダを作成
-        RreqHeader rreqHeader;
-        rreqHeader.SetDstSeqno(0);
-        rreqHeader.SetHopCount(0);
-        rreqHeader.SetOrigin(receiver);
-        rreqHeader.SetGratuitousRrep(false);
-        rreqHeader.SetDestinationOnly(true);
-        rreqHeader.SetUnknownSeqno(true);
-        rreqHeader.SetAnotherRouteCreateFlag(true);
-        rreqHeader.SetExcludedList(excludedList);
-        rreqHeader.SetDst(dst);
-        //RREQIDを設定
-        rreqHeader.SetId(m_requestId++);
+        NS_LOG_DEBUG("EAノード(" << receiver << ") → " << dst
+                     << " に別経路RREQを送信 (SendRequest使用)");
 
-        Ptr<Packet> packet = Create<Packet>();
-        SocketIpTtlTag tag;
-        tag.SetTtl(5);
-        packet->AddPacketTag(tag);
-        packet->AddHeader(rreqHeader);
-        TypeHeader tHeader(AODVTYPE_RREQ);
-        packet->AddHeader(tHeader);
+        // --- 一時的に別経路RREQを構築・送信 ---
+        SendRequest(dst, /*isAltRoute=*/true, excludedList);
 
-        //別経路作成用のRREQをブロードキャスト
-        for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
-        {
-            Ptr<Socket> socket = j->first;
-            Ipv4InterfaceAddress iface = j->second;
+    //     // RREQを設定
+    //     //メッセージヘッダを作成
+    //     RreqHeader rreqHeader;
+    //     rreqHeader.SetDstSeqno(0);
+    //     rreqHeader.SetHopCount(0);
+    //     rreqHeader.SetOrigin(receiver);
+    //     rreqHeader.SetGratuitousRrep(false);
+    //     rreqHeader.SetDestinationOnly(true);
+    //     rreqHeader.SetUnknownSeqno(true);
+    //     rreqHeader.SetAnotherRouteCreateFlag(true);
+    //     rreqHeader.SetExcludedList(excludedList);
+    //     rreqHeader.SetDst(dst);
+    //     //RREQIDを設定
+    //     rreqHeader.SetId(m_requestId++);
 
-            rreqHeader.SetOrigin(iface.GetLocal());
-            Ipv4Address destination;
-            if (iface.GetMask() == Ipv4Mask::GetOnes())
-            {
-                destination = Ipv4Address("255.255.255.255");
-            }
-            else
-            {
-                destination = iface.GetBroadcast();
-            }
+    //     Ptr<Packet> packet = Create<Packet>();
+    //     SocketIpTtlTag tag;
+    //     tag.SetTtl(5);
+    //     packet->AddPacketTag(tag);
+    //     packet->AddHeader(rreqHeader);
+    //     TypeHeader tHeader(AODVTYPE_RREQ);
+    //     packet->AddHeader(tHeader);
 
-            NS_LOG_DEBUG("別経路RREQを送信： " << iface.GetLocal()
-                         << " -> " << destination
-                         << " (宛先EA=" << dst << ") TTL=5");
+    //     //別経路作成用のRREQをブロードキャスト
+    //     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
+    //     {
+    //         Ptr<Socket> socket = j->first;
+    //         Ipv4InterfaceAddress iface = j->second;
+
+    //         rreqHeader.SetOrigin(iface.GetLocal());
+    //         Ipv4Address destination;
+    //         if (iface.GetMask() == Ipv4Mask::GetOnes())
+    //         {
+    //             destination = Ipv4Address("255.255.255.255");
+    //         }
+    //         else
+    //         {
+    //             destination = iface.GetBroadcast();
+    //         }
+
+    //         NS_LOG_DEBUG("別経路RREQを送信： " << iface.GetLocal()
+    //                      << " -> " << destination
+    //                      << " (宛先EA=" << dst << ") TTL=5");
             
-            //socket->SetIpTtl(5); // ★確実なTTL制御
+    //         //socket->SetIpTtl(5); // ★確実なTTL制御
             
-            m_lastBcastTime = Simulator::Now();
-            Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
-                            &RoutingProtocol::SendTo,
-                            this,
-                            socket,
-                            packet,
-                            destination);
-        }
+    //         m_lastBcastTime = Simulator::Now();
+    //         Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
+    //                         &RoutingProtocol::SendTo,
+    //                         this,
+    //                         socket,
+    //                         packet,
+    //                         destination);
+    //     }
         
     }
 }
