@@ -170,7 +170,8 @@ RoutingProtocol::RoutingProtocol()
       m_htimer(Timer::CANCEL_ON_DESTROY),
       m_rreqRateLimitTimer(Timer::CANCEL_ON_DESTROY),
       m_rerrRateLimitTimer(Timer::CANCEL_ON_DESTROY),
-      m_lastBcastTime()
+      m_lastBcastTime(),
+      m_anotherRouteID(0)
       
 {
     m_nb.SetCallback(MakeCallback(&RoutingProtocol::SendRerrWhenBreaksLinkToNextHop, this));
@@ -1032,16 +1033,20 @@ RoutingProtocol::LoopbackRoute(const Ipv4Header& hdr, Ptr<NetDevice> oif) const
 }
 
 void
-RoutingProtocol::SendRequest(Ipv4Address dst, bool Anothorflag, std::vector<Ipv4Address> exlist)
+RoutingProtocol::SendRequest(Ipv4Address dst, bool Anothorflag, std::vector<Ipv4Address> exlist, uint32_t messageId)
 {
     NS_LOG_FUNCTION(this << dst);
+
     // A node SHOULD NOT originate more than RREQ_RATELIMIT RREQ messages per second.
     if (m_rreqCount == m_rreqRateLimit)
     {
         Simulator::Schedule(m_rreqRateLimitTimer.GetDelayLeft() + MicroSeconds(100),
                             &RoutingProtocol::SendRequest,
                             this,
-                            dst);
+                            dst/*宛先アドレス*/,
+                            false,/*別経路構築用のフラグ*/
+                            std::vector<Ipv4Address>(), /*検知対象ノードの隣接ノードリスト*/
+                            0/*別経路作成用RREQのメッセージID*/);
         return;
     }
     else
@@ -1130,6 +1135,7 @@ RoutingProtocol::SendRequest(Ipv4Address dst, bool Anothorflag, std::vector<Ipv4
         rreqHeader.SetDestinationOnly(true);
         rreqHeader.SetAnotherRouteCreateFlag(true);
         rreqHeader.SetExcludedList(exlist);
+        rreqHeader.SetDetectionReqID(messageId);
     }
 
     // Send RREQ as subnet directed broadcast from each interface used by aodv
@@ -1697,6 +1703,7 @@ RoutingProtocol::SendReply(const RreqHeader& rreqHeader, const RoutingTableEntry
     if(rreqHeader.GetAnotherRouteCreateFlag())
     {
         rrepHeader.SetAnotherRouteCreateFlag(true);
+        rrepHeader.SetDetectionReqID(rreqHeader.GetDetectionReqID());
     }
     
     Ptr<Packet> packet = Create<Packet>();
@@ -1802,7 +1809,7 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
     Ipv4Address dst = rrepHeader.GetDst();
     NS_LOG_LOGIC("RREP destination " << dst << " RREP origin " << rrepHeader.GetOrigin());
 
-   uint8_t hop = rrepHeader.GetHopCount();
+    uint8_t hop = rrepHeader.GetHopCount();
     // Increment RREQ hop count
     if(rrepHeader.GetWHForwardFlag() == 1 || rrepHeader.GetWHForwardFlag() == 2)
     {
@@ -1908,6 +1915,13 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
             m_addressReqTimer[dst].Cancel();
             m_addressReqTimer.erase(dst);
         }
+
+        //受信したRREPが別経路作成用のRREPの場合
+        if(rrepHeader.GetAnotherRouteCreateFlag())
+        {
+            ProcessCreateAnotherRoutes(rrepHeader);
+        }
+
         m_routingTable.LookupRoute(dst, toDst);
         SendPacketFromQueue(dst, toDst.GetRoute());
         return;
@@ -2050,6 +2064,69 @@ RoutingProtocol::RecvReplyAck(Ipv4Address neighbor)
         rt.m_ackTimer.Cancel();
         rt.SetFlag(VALID);
         m_routingTable.Update(rt);
+    }
+}
+
+void 
+RoutingProtocol::ProcessCreateAnotherRoutes(const RrepHeader rrepHeader)
+{
+    NS_LOG_FUNCTION(this);
+
+    Ipv4Address dst = rrepHeader.GetDst();
+    Ipv4Address origin = rrepHeader.GetOrigin();
+    uint8_t hopCount = rrepHeader.GetHopCount();
+    uint32_t messageID = rrepHeader.GetDetectionReqID();
+
+    NS_LOG_DEBUG("別経路RREP受信処理: origin=" << origin << " dst=" << dst 
+                 << " hop=" << static_cast<int>(hopCount));
+
+    // 関連する別経路要求を探索
+    bool found = false;
+    bool isSafe = false;
+    for (auto& [id, entry] : m_detectionReqCache)
+    {
+        if (id == messageID)
+        {
+            found = true;
+            NS_LOG_DEBUG("別経路要求メッセージID：" << messageID <<"が一致しました");
+            // 対象ノードを更新
+            if (std::find(entry.exNeighborList.begin(), entry.exNeighborList.end(), dst) != entry.exNeighborList.end())
+            {
+                //該当の隣接ノードを発見した場合
+                entry.hopCountMap[dst] = hopCount;
+                NS_LOG_DEBUG("更新: " << dst << " のホップ数 = " << int(hopCount));
+
+                
+
+            }else{
+                //メッセージIDが一致しているが、該当の隣接ノードが発見できない場合
+                NS_LOG_DEBUG("メッセージID：" << messageID << "の排他的隣接ノードリストの中に該当のノード：" << dst <<"を発見できませんでした");
+                
+            }
+            // ★ 全ノードのホップ数が4以下かチェック
+            isSafe = std::all_of(entry.hopCountMap.begin(),
+                                    entry.hopCountMap.end(),
+                                    [](const auto& kv) { return kv.second <= 4; });
+            break;
+        }
+    }
+
+    if (!found)
+    {
+        NS_LOG_DEBUG("同じメッセージIDが発見できません。" << messageID);
+        return;
+    }
+    
+    if(!(hopCount <= 4))
+    {
+        NS_LOG_DEBUG("排他的隣接ノード：" << dst << "までのホップ数が4より大きいためWHと検知したメッセージを送信");
+
+    }
+
+    //すべての排他的隣接ノードが4ホップ以下の場合、セーフメッセージを送信
+    if(isSafe)
+    {
+        NS_LOG_DEBUG("すべての別経路が4ホップ以内 → WH攻撃ではない");       
     }
 }
 
@@ -2323,6 +2400,8 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
         }
     }
 
+    uint32_t myid = m_anotherRouteID++;
+
     // //排他的隣接ノードに別経路を構築してもらうためのRequestメッセージを送信
     for(auto it = exclusiveNeighbors.begin(); it != exclusiveNeighbors.end(); ++it)
     {
@@ -2330,6 +2409,7 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
         NS_LOG_DEBUG("排他的隣接ノード" << exNeighbor << "に別経路構築用のRequestメッセージを送信します。");
 
         DetectionRreqHeader DetectionRreqHeader(
+            /*別経路要求ID*/myid,
             /*送信元アドレス*/receiver,
             /*検知対象アドレス*/rrepHeader.GetDst(),
             /*排他的隣接ノードリスト*/exclusiveNeighbors,
@@ -2375,6 +2455,19 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
     std::vector<Ipv4Address> excludedList = detectionrq.GetTargetNeighborList();
     excludedList.push_back(detectionrq.GetTarget());
 
+    DetectionReqEntry entry;
+    entry.messageId = detectionrq.GetAnotherRouteID();
+    entry.origin = detectionrq.GetOrigin();
+    entry.exNeighborList = detectionrq.GetExneighborList();
+
+    // まず初期状態ではホップ数未計測（例: 255）
+    for (auto addr : entry.exNeighborList)
+    {
+        entry.hopCountMap[addr] = 255;
+    }
+
+    m_detectionReqCache[entry.messageId] = entry;
+
     //自ノード以外の排他的隣接ノードに別経路要求メッセージを送信
     for(auto dst : detectionrq.GetExneighborList())
     {
@@ -2387,7 +2480,7 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
                      << " に別経路RREQを送信 (SendRequest使用)");
 
         // --- 一時的に別経路RREQを構築・送信 ---
-        SendRequest(dst, /*isAltRoute=*/true, excludedList);
+        SendRequest(dst, /*isAltRoute=*/true, excludedList, entry.messageId);
 
     //     // RREQを設定
     //     //メッセージヘッダを作成

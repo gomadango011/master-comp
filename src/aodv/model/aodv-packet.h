@@ -310,6 +310,17 @@ class RreqHeader : public Header
         return m_ExcludedList;
     }
 
+    //別経路要求メッセージのID設定・取得
+    void SetDetectionReqID(const uint32_t id)
+    {
+        m_DetectionReqID = id;
+    }
+
+    uint32_t GetDetectionReqID() const
+    {
+        return m_DetectionReqID;
+    }
+
     // Flags
     /**
      * @brief Set the gratuitous RREP flag
@@ -361,6 +372,7 @@ class RreqHeader : public Header
     uint8_t m_WHForwardFlag;///< 内部WH攻撃用転送フラグ
     bool m_AnotherRouteCreateFlag; ///< 別経路構築用のフラグ
     std::vector<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
+    uint32_t m_DetectionReqID;
 };
 
 /**
@@ -568,6 +580,17 @@ class RrepHeader : public Header
         return m_AnotherRouteCreateFlag;
     }
 
+    //別経路要求メッセージのID設定・取得
+    void SetDetectionReqID(const uint32_t id)
+    {
+        m_DetectionReqID = id;
+    }
+
+    uint32_t GetDetectionReqID() const
+    {
+        return m_DetectionReqID;
+    }
+
     // Flags
     /**
      * @brief Set the ack required flag
@@ -619,6 +642,7 @@ class RrepHeader : public Header
     float m_NeighborRatio;    ///< 隣接ノード比率
     std::vector<Ipv4Address> m_neighborList; ///< 隣接ノードリスト
     bool m_AnotherRouteCreateFlag;
+    uint32_t m_DetectionReqID;
 };
 
 /**
@@ -783,12 +807,14 @@ class DetectionRreqHeader : public Header
   public:
     /// constructor
     /** 
+     * @param anotherrouteID 別経路要求用のID
      * @param origin 送信元アドレス
      * @param target 検出対象ノードアドレス
      * @param ExneighborList 排他的隣接ノードのリスト
      * @param targetNeighborList 検出対象ノードの隣接ノードリスト
     */
-    DetectionRreqHeader(Ipv4Address origin = Ipv4Address(), /*送信元アドレス*/
+    DetectionRreqHeader(uint32_t anotherrouteID = 0,
+                        Ipv4Address origin = Ipv4Address(), /*送信元アドレス*/
                         Ipv4Address target = Ipv4Address(), /*検出対象ノードアドレス*/
                         std::vector<Ipv4Address> ExneighborList = std::vector<Ipv4Address>(),/*排他的隣接ノードのリスト*/
                         std::vector<Ipv4Address> targetNeighborList = std::vector<Ipv4Address>()/*検出対象ノードの隣接ノードリスト*/
@@ -804,6 +830,17 @@ class DetectionRreqHeader : public Header
     void Serialize(Buffer::Iterator start) const override;
     uint32_t Deserialize(Buffer::Iterator start) override;
     void Print(std::ostream& os) const override;
+
+    //別経路要求ID設定・取得
+    void SetAnotherRouteID(uint32_t id)
+    {
+        m_anotherrouteID = id;
+    }
+
+    uint32_t GetAnotherRouteID()
+    {
+        return m_anotherrouteID;
+    }
 
     // Fields
     //送信元アドレス設定・取得
@@ -858,6 +895,7 @@ class DetectionRreqHeader : public Header
     bool operator==(const DetectionRreqHeader& o) const;
 
   private:
+    uint32_t m_anotherrouteID;
     uint8_t m_reserved; ///< Not used (must be 0)
     Ipv4Address m_origin;   ///< 送信元アドレス
     Ipv4Address m_target;   ///< 検出対象ノードアドレス

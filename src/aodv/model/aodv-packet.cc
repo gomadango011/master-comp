@@ -178,6 +178,7 @@ RreqHeader::GetSerializedSize() const
     return 23
             + 1 // +1 for WHForwardFlag
             + 1 //　別経路構築用のフラグ
+            + 4 // 別経路要求メッセージのID
             + 4 * m_ExcludedList.size(); // 除外ノードリスト
 }
 
@@ -200,6 +201,7 @@ RreqHeader::Serialize(Buffer::Iterator i) const
     {
         WriteTo(i, addr);
     }
+    i.WriteHtonU32(m_DetectionReqID);
 }
 
 uint32_t
@@ -226,6 +228,8 @@ RreqHeader::Deserialize(Buffer::Iterator start)
         m_ExcludedList.push_back(addr);
     }
 
+    m_DetectionReqID = i.ReadNtohU32();
+
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
     return dist;
@@ -240,7 +244,8 @@ RreqHeader::Print(std::ostream& os) const
     os << " flags: Gratuitous RREP " << (*this).GetGratuitousRrep() << " Destination only "
        << (*this).GetDestinationOnly() << " Unknown sequence number " << (*this).GetUnknownSeqno();
     os << " WHForwardFlag " << m_WHForwardFlag << "notherRouteCreateFlag" << (int)m_AnotherRouteCreateFlag;
-    }
+    os << "別経路要求メッセージのID" << m_DetectionReqID;    
+}
 
 std::ostream&
 operator<<(std::ostream& os, const RreqHeader& h)
@@ -312,7 +317,8 @@ RreqHeader::operator==(const RreqHeader& o) const
     return (m_flags == o.m_flags && m_reserved == o.m_reserved && m_hopCount == o.m_hopCount &&
             m_requestID == o.m_requestID && m_dst == o.m_dst && m_dstSeqNo == o.m_dstSeqNo &&
             m_origin == o.m_origin && m_originSeqNo == o.m_originSeqNo &&
-            m_WHForwardFlag == o.m_WHForwardFlag && m_AnotherRouteCreateFlag == o.m_AnotherRouteCreateFlag);
+            m_WHForwardFlag == o.m_WHForwardFlag && m_AnotherRouteCreateFlag == o.m_AnotherRouteCreateFlag
+            && m_DetectionReqID == o.m_DetectionReqID);
 }
 
 //-----------------------------------------------------------------------------
@@ -371,6 +377,7 @@ RrepHeader::GetSerializedSize() const
     + 4 /*NeighborCount*/
     + 1 /*AnotherRouteCreateFlag*/
     + 4 /*NeighborRatio*/
+    + 4 /*経路要求メッセージのID*/
     + neighborListSize; //隣接ノードリストのサイズを加算;
 }
 
@@ -388,13 +395,17 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     i.WriteHtonU32(m_NeighborCount); // NeighborCountを4バイトとしてシリアル化する
     i.WriteHtonU32(static_cast<uint32_t>(m_NeighborRatio * 10000)); // NeighborRatioを4バイトとしてシリアル化する
 
-    //隣接ノードリストのサイズ分書き込む
-    for (auto addr : m_neighborList)
+    if(m_NeighborRatio >= 1.2)
     {
-        WriteTo(i, addr);
+        //隣接ノードリストのサイズ分書き込む
+        for (auto addr : m_neighborList)
+        {
+            WriteTo(i, addr);
+        }
     }
 
     i.WriteU8(m_AnotherRouteCreateFlag);//m_AnotherRouteCreateFlag
+    i.WriteHtonU32(m_DetectionReqID);
 }
 
 uint32_t
@@ -426,6 +437,7 @@ RrepHeader::Deserialize(Buffer::Iterator start)
     }
 
     m_AnotherRouteCreateFlag = i.ReadU8();
+    m_DetectionReqID = i.ReadNtohU32(); //別経路要求メッセージのID
     
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
@@ -445,7 +457,7 @@ RrepHeader::Print(std::ostream& os) const
        << " WHForwardFlag " << m_WHForwardFlag
        << " NeighborCount " << m_NeighborCount;
     os << " NeighborRatio " << m_NeighborRatio;
-    os << "別経路作成用のフラグ" << m_AnotherRouteCreateFlag;
+    os << "別経路作成用のフラグ" << m_AnotherRouteCreateFlag << "別経路要求メッセージのID" << m_DetectionReqID;
 }
 
 void
@@ -498,7 +510,8 @@ RrepHeader::operator==(const RrepHeader& o) const
     return (m_flags == o.m_flags && m_prefixSize == o.m_prefixSize && m_hopCount == o.m_hopCount &&
             m_dst == o.m_dst && m_dstSeqNo == o.m_dstSeqNo && m_origin == o.m_origin &&
             m_lifeTime == o.m_lifeTime && m_WHForwardFlag == o.m_WHForwardFlag && m_NeighborCount == o.m_NeighborCount
-            && m_NeighborRatio == o.m_NeighborRatio && m_AnotherRouteCreateFlag == o.m_AnotherRouteCreateFlag);
+            && m_NeighborRatio == o.m_NeighborRatio && m_AnotherRouteCreateFlag == o.m_AnotherRouteCreateFlag
+            && m_DetectionReqID == o.m_DetectionReqID);
 }
 
 void
@@ -515,6 +528,7 @@ RrepHeader::SetHello(Ipv4Address origin, uint32_t srcSeqNo, Time lifetime)
     m_NeighborCount = 0;
     m_NeighborRatio = 0.0;
     m_AnotherRouteCreateFlag = false;
+    m_DetectionReqID = 0;
 }
 
 std::ostream&
@@ -757,12 +771,14 @@ operator<<(std::ostream& os, const RerrHeader& h)
 // DetectionRreqHeader
 //-----------------------------------------------------------------------------
 
-DetectionRreqHeader::DetectionRreqHeader(Ipv4Address origin ,
+DetectionRreqHeader::DetectionRreqHeader(uint32_t anotherrouteID,
+                                         Ipv4Address origin ,
                                          Ipv4Address target,
                                          std::vector<Ipv4Address> ExneighborList,
                                          std::vector<Ipv4Address> targetNeighborList
                                         )
-    : m_reserved(0),
+    : m_anotherrouteID(anotherrouteID),
+      m_reserved(0),
       m_origin(origin),
       m_target(target),
       m_ExneighborList(ExneighborList),
@@ -792,6 +808,7 @@ uint32_t
 DetectionRreqHeader::GetSerializedSize() const
 {
     return 1
+           +4 /*別経路要求ID*/
            +4 /*送信元IPアドレス*/
            +4 /*検知対象のIPアドレス*/
            +2 /*排他的隣接ノードリストのサイズ*/
@@ -804,6 +821,7 @@ void
 DetectionRreqHeader::Serialize(Buffer::Iterator i) const
 {
     i.WriteU8(m_reserved);
+    i.WriteHtonU32(m_anotherrouteID); // ★ 追加: 別経路要求IDをシリアライズ
     WriteTo(i, m_origin);
     WriteTo(i, m_target);
 
@@ -821,6 +839,7 @@ DetectionRreqHeader::Deserialize(Buffer::Iterator start)
 {
     Buffer::Iterator i = start;
     m_reserved = i.ReadU8();
+    m_anotherrouteID = i.ReadNtohU32(); // ★ 追加: 別経路要求IDを復元
     ReadFrom(i, m_origin);
     ReadFrom(i, m_target);
 
@@ -852,13 +871,15 @@ DetectionRreqHeader::Deserialize(Buffer::Iterator start)
 void
 DetectionRreqHeader::Print(std::ostream& os) const
 {
-    os << "送信元アドレス" << m_origin << "検知対象ノード" << m_target;
+    os << "別経路要求ID=" << m_anotherrouteID
+       << " 送信元アドレス=" << m_origin
+       << " 検知対象ノード=" << m_target;
 }
 
 bool
 DetectionRreqHeader::operator==(const DetectionRreqHeader& o) const
 {
-    return m_reserved == o.m_reserved && m_origin == o.m_origin && m_target == o.m_target &&
+    return m_anotherrouteID == o.m_anotherrouteID && m_reserved == o.m_reserved && m_origin == o.m_origin && m_target == o.m_target &&
            m_ExneighborList == o.m_ExneighborList && m_targetNeighborList == o.m_targetNeighborList;
 }
 

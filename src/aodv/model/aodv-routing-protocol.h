@@ -283,6 +283,28 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     //隣接ノード比率のしきい値
     float m_whNeighborThreshold;
 
+    //別経路要求メッセージを受信した際に、ID、送信元ノード、排他的隣接ノード、排他的隣接ノードが4ホップいないかを保持するための構造体
+    struct DetectionReqEntry
+    {
+        uint32_t messageId;                         // 別経路要求ID
+        ns3::Ipv4Address origin;                    // 送信元ノード
+        std::vector<ns3::Ipv4Address> exNeighborList; // 排他的隣接ノードリスト
+
+        // 各隣接ノードまでのホップ数を保存（key=IP, value=hop数）
+        std::map<ns3::Ipv4Address, uint8_t> hopCountMap; 
+
+        // Utility: 指定ノードが4ホップ以内か判定
+        bool IsWithin4Hops(ns3::Ipv4Address node) const
+        {
+            auto it = hopCountMap.find(node);
+            return (it != hopCountMap.end() && it->second <= 4);
+        }
+    };
+
+    // メッセージIDごとにDetectionReq情報を保存
+    std::unordered_map<uint32_t, DetectionReqEntry> m_detectionReqCache;
+
+
   private:
     /// Start protocol operation
     void Start();
@@ -412,6 +434,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param neighbor neighbor address
      */
     void RecvReplyAck(Ipv4Address neighbor);
+
+    //別経路作成を要求したノードがRREPを受信した場合
+    void ProcessCreateAnotherRoutes(const RrepHeader rrepheader);
     /**
      * Receive RERR
      * @param p packet
@@ -441,10 +466,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param dst destination address
      */
 
-    // 既存の宣言は残す
-    void SendRequest(Ipv4Address dst);
-
-    void SendRequest(Ipv4Address dst, bool anothorflag , const std::vector<Ipv4Address> exlist);
+    void SendRequest(Ipv4Address dst, bool anothorflag = false, std::vector<Ipv4Address> exlist = std::vector<Ipv4Address> {}, uint32_t messageId = 0);
     /** Send RREP
      * @param rreqHeader route request header
      * @param toOrigin routing table entry to originator
@@ -520,6 +542,11 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     Ptr<UniformRandomVariable> m_uniformRandomVariable;
     /// Keep track of the last bcast time
     Time m_lastBcastTime;
+
+    //別経路要求ID
+    uint32_t m_anotherRouteID;
+
+
 };
 
 } // namespace aodv
