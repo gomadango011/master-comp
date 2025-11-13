@@ -1269,6 +1269,10 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
         RecvDetectionReq(packet, receiver, sender);
         break;
     }
+    case AODVTYPE_DETECTION_RESULT: {
+        RecvDetectionResult(packet, receiver, sender);
+        break;
+    }
     }
 }
 
@@ -2083,10 +2087,12 @@ RoutingProtocol::ProcessCreateAnotherRoutes(const RrepHeader rrepHeader)
     // 関連する別経路要求を探索
     bool found = false;
     bool isSafe = false;
+    DetectionReqEntry* targetEntry = nullptr;
     for (auto& [id, entry] : m_detectionReqCache)
     {
         if (id == messageID)
         {
+            targetEntry = &entry;
             found = true;
             NS_LOG_DEBUG("別経路要求メッセージID：" << messageID <<"が一致しました");
             // 対象ノードを更新
@@ -2120,14 +2126,79 @@ RoutingProtocol::ProcessCreateAnotherRoutes(const RrepHeader rrepHeader)
     if(!(hopCount <= 4))
     {
         NS_LOG_DEBUG("排他的隣接ノード：" << dst << "までのホップ数が4より大きいためWHと検知したメッセージを送信");
+        SendDetectionResult(targetEntry, 2, 0); //正常と判定した場合、0, WHと判定した場合1
 
     }
+
+    
 
     //すべての排他的隣接ノードが4ホップ以下の場合、セーフメッセージを送信
     if(isSafe)
     {
         NS_LOG_DEBUG("すべての別経路が4ホップ以内 → WH攻撃ではない");       
+
+        SendDetectionResult(targetEntry, 2, 1); //正常と判定した場合、0, WHと判定した場合1
     }
+}
+
+//別経路要求メッセージの送信元（検知を開始舌ノード）に判定結果を送信
+void
+RoutingProtocol::SendDetectionResult(DetectionReqEntry* entry, uint8_t stepflag, uint8_t detectionflag)
+{
+    NS_LOG_FUNCTION(this);
+    
+    //自身のIPアドレスを特定
+    Ipv4Address selfAddr = m_ipv4->GetAddress(1, 0).GetLocal();
+
+    DetectionResultHeader detectionresultheader(/*別経路要求用のID*/entry->messageId,
+                                                /*別経路要求メッセージの送信元*/entry->origin,
+                                                /*このメッセージの送信ノード*/selfAddr,
+                                                /*検知対象ノード*/entry->target,
+                                                /*ステップ 2or3を示すフラグ*/stepflag,
+                                                /*検知結果を示すフラグ*/detectionflag
+                                                );
+    
+    //別経路要求メッセージの送信元ノードまでのルーチングテーブルを取得
+    RoutingTableEntry toOrigin;
+    if (!m_routingTable.LookupRoute(entry->origin, toOrigin))
+    {
+        NS_LOG_DEBUG("SendDetectionResult: 検知開始ノード "
+                     << entry->origin << " へのルートが存在しません");
+        return;
+    }
+
+    Ptr<Packet> packet = Create<Packet>();
+    SocketIpTtlTag ttl;
+    ttl.SetTtl(1);
+    packet->AddPacketTag(ttl);
+    packet->AddHeader(detectionresultheader);
+    TypeHeader tHeader(AODVTYPE_DETECTION_RESULT);
+    packet->AddHeader(tHeader);
+    Ptr<Socket> socket = FindSocketWithInterfaceAddress(toOrigin.GetInterface());
+    NS_ASSERT(socket);
+    socket->SendTo(packet, 0, InetSocketAddress(toOrigin.GetNextHop(), AODV_PORT));
+    return;
+}
+
+void
+RoutingProtocol::RecvDetectionResult(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
+{
+    NS_LOG_FUNCTION(this);
+
+    DetectionResultHeader detectionresultheader;
+    p->RemoveHeader(detectionresultheader);
+    NS_LOG_DEBUG("（" << src << "）⇨（" << receiver <<"）の結果メッセージを受信" 
+        << "メッセージID：" << detectionresultheader.GetAnotherRouteID() 
+        << "検知対象ノード：" << detectionresultheader.GetTarget()
+        << "ステップ：" << detectionresultheader.GetStepFlag()
+        << "判定結果：" << detectionresultheader.GetDetectionFlag());
+
+    //検知開始ノードが自身のIPアドレスと一致しない場合、メッセージを破棄
+    if(receiver != detectionresultheader.GetOrigin())
+    {
+        NS_LOG_DEBUG("受信した判定結果メッセージの判定開始ノードが自身のIPアドレスと一致しませんでした。自身のIPアドレス："<< receiver << "   メッセージのOrigin：" << detectionresultheader.GetOrigin());
+    }
+    
 }
 
 void
@@ -2459,6 +2530,7 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
     entry.messageId = detectionrq.GetAnotherRouteID();
     entry.origin = detectionrq.GetOrigin();
     entry.exNeighborList = detectionrq.GetExneighborList();
+    entry.target = detectionrq.GetTarget();
 
     // まず初期状態ではホップ数未計測（例: 255）
     for (auto addr : entry.exNeighborList)

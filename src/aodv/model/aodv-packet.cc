@@ -71,7 +71,8 @@ TypeHeader::Deserialize(Buffer::Iterator start)
     case AODVTYPE_RREP:
     case AODVTYPE_RERR:
     case AODVTYPE_RREP_ACK: 
-    case AODVTYPE_DetectionReq:{
+    case AODVTYPE_DetectionReq:
+    case AODVTYPE_DETECTION_RESULT:{
         m_type = (MessageType)type;
         break;
     }
@@ -106,6 +107,10 @@ TypeHeader::Print(std::ostream& os) const
     }
     case AODVTYPE_DetectionReq: {
         os << "DetectionReq";
+        break;
+    }
+    case AODVTYPE_DETECTION_RESULT: {
+        os << "DETECTION_RESULT";
         break;
     }
     default:
@@ -889,5 +894,111 @@ operator<<(std::ostream& os, const DetectionRreqHeader& h)
     h.Print(os);
     return os;
 }
+
+
+//-----------------------------------------------------------------------------
+// DetectionResultHeader
+//-----------------------------------------------------------------------------
+
+DetectionResultHeader::DetectionResultHeader(uint32_t anotherrouteID,
+                                            Ipv4Address origin ,
+                                            Ipv4Address sender,
+                                            Ipv4Address target,
+                                            uint8_t stepflag,
+                                            uint8_t detectionflag
+                                            )
+    : m_anotherrouteID(anotherrouteID),
+      m_reserved(0),
+      m_origin(origin),
+      m_sender(sender),
+      m_target(target),
+      m_stepflag(stepflag),
+      m_detectionflag(detectionflag)
+{
+}
+
+NS_OBJECT_ENSURE_REGISTERED(DetectionResultHeader);
+
+TypeId
+DetectionResultHeader::GetTypeId()
+{
+    static TypeId tid = TypeId("ns3::aodv::DetectionResultHeader")
+                            .SetParent<Header>()
+                            .SetGroupName("Aodv")
+                            .AddConstructor<DetectionResultHeader>();
+    return tid;
+}
+
+TypeId
+DetectionResultHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+uint32_t
+DetectionResultHeader::GetSerializedSize() const
+{
+    return 1
+           +4 /*別経路要求ID*/
+           +4 /*送信元IPアドレス*/
+           +4 /*このメッセージの送信者のIPアドレス*/
+           +4 /*検知対象のIPアドレス*/
+           +2; /*ステップフラグ & 判定結果フラグ*/
+}
+
+void
+DetectionResultHeader::Serialize(Buffer::Iterator i) const
+{
+    i.WriteU8(m_reserved);
+    i.WriteHtonU32(m_anotherrouteID); // ★ 追加: 別経路要求IDをシリアライズ
+    WriteTo(i, m_origin);
+    WriteTo(i, m_sender);
+    WriteTo(i, m_target);
+    i.WriteU8(m_stepflag);
+    i.WriteU8(m_detectionflag);
+}
+
+uint32_t
+DetectionResultHeader::Deserialize(Buffer::Iterator start)
+{
+    Buffer::Iterator i = start;
+    m_reserved = i.ReadU8();
+    m_anotherrouteID = i.ReadNtohU32(); // ★ 追加: 別経路要求IDを復元
+    ReadFrom(i, m_origin);
+    ReadFrom(i, m_sender);
+    ReadFrom(i, m_target);
+    m_stepflag = i.ReadU8();
+    m_detectionflag = i.ReadU8();
+
+    uint32_t dist = i.GetDistanceFrom(start);
+    NS_ASSERT(dist == GetSerializedSize());
+    return dist;
+}
+
+void
+DetectionResultHeader::Print(std::ostream& os) const
+{
+    os << "別経路要求ID=" << m_anotherrouteID
+       << "検知開始ノード=" << m_origin
+       << "このメッセージのセンダー=" << m_sender
+       << "検知対象ノード=" << m_target
+       << "ステップフラグ=" << m_stepflag
+       << "判定結果フラグ=" << m_detectionflag;
+}
+
+bool
+DetectionResultHeader::operator==(const DetectionResultHeader& o) const
+{
+    return m_anotherrouteID == o.m_anotherrouteID && m_reserved == o.m_reserved && m_sender == o.m_sender &&m_origin == o.m_origin && m_target == o.m_target &&
+           m_stepflag == o.m_stepflag && m_detectionflag == o.m_detectionflag;
+}
+
+std::ostream&
+operator<<(std::ostream& os, const DetectionResultHeader& h)
+{
+    h.Print(os);
+    return os;
+}
+
 } // namespace aodv
 } // namespace ns3

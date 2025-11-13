@@ -288,6 +288,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     {
         uint32_t messageId;                         // 別経路要求ID
         ns3::Ipv4Address origin;                    // 送信元ノード
+        ns3::Ipv4Address target;                    //検知対象ノード
         std::vector<ns3::Ipv4Address> exNeighborList; // 排他的隣接ノードリスト
 
         // 各隣接ノードまでのホップ数を保存（key=IP, value=hop数）
@@ -382,6 +383,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     void ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiverIfaceAddr);
 
+    void SendDetectionResult(DetectionReqEntry* entry, uint8_t stepflag, uint8_t detectionflag);
+
     //内部WH攻撃
     /*攻撃者間の経路が構築されていない場合の処理。経路作成後に、hrlloメッセージを相方に転送する。
     */
@@ -449,6 +452,11 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * 別経路要求メッセージを受信
      */
     void RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+
+    /**
+     * ステップ2 or 3の判定結果メッセージを受信した場合の処理
+     */
+    void RecvDetectionResult(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
     /** @} */
 
     /**
