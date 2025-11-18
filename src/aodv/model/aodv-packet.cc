@@ -168,9 +168,9 @@ uint32_t
 RreqHeader::GetSerializedSize() const
 {
     return 23
-            + 1 // +1 for WHForwardFlag
-            + 1 //　別経路構築用のフラグ
-            + 4; // 別経路要求メッセージのID
+            + 1; // +1 for WHForwardFlag
+            //+ 1 //　別経路構築用のフラグ
+            // + 4; // 別経路要求メッセージのID
 }
 
 void
@@ -356,13 +356,16 @@ RrepHeader::GetSerializedSize() const
 {
     uint32_t neighborListSize = m_neighborList.size() * 4; //隣接ノードリストのサイズ（IPv4アドレスは4バイト）
 
+
+
     return 19 
     + 1 /*WHForwardFlag*/ 
     + 4 /*NeighborCount*/
-    + 1 /*AnotherRouteCreateFlag*/
-    + 4; /*NeighborRatio*/
+    // + 1 /*AnotherRouteCreateFlag*/
+    + 4 /*NeighborRatio*/
+    + neighborListSize; //隣接ノードリストのサイズを加
     // + 4 /*経路要求メッセージのID*/
-    // + neighborListSize; //隣接ノードリストのサイズを加
+    
 }
 
 void
@@ -379,13 +382,10 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     i.WriteHtonU32(m_NeighborCount); // NeighborCountを4バイトとしてシリアル化する
     i.WriteHtonU32(static_cast<uint32_t>(m_NeighborRatio * 10000)); // NeighborRatioを4バイトとしてシリアル化する
 
-    if(m_NeighborRatio >= 1.2)
+    //隣接ノードリストのサイズ分書き込む
+    for (auto addr : m_neighborList)
     {
-        //隣接ノードリストのサイズ分書き込む
-        for (auto addr : m_neighborList)
-        {
-            WriteTo(i, addr);
-        }
+        WriteTo(i, addr);
     }
 
     // i.WriteU8(m_AnotherRouteCreateFlag);//m_AnotherRouteCreateFlag
@@ -409,15 +409,12 @@ RrepHeader::Deserialize(Buffer::Iterator start)
     m_NeighborRatio = static_cast<float>(i.ReadNtohU32()) / 10000.0f; // NeighborRatioを4バイトとしてデシリアル化する
 
     //隣接ノード比率がしきい値以上の場合、隣接ノードリストを読み込む
-    if (m_NeighborRatio >= 1.2) 
+    m_neighborList.clear();
+    for (uint32_t idx = 0; idx < m_NeighborCount; ++idx)
     {
-        m_neighborList.clear();
-        for (uint32_t idx = 0; idx < m_NeighborCount; ++idx)
-        {
-            Ipv4Address neighborAddr;
-            ReadFrom(i, neighborAddr);
-            m_neighborList.push_back(neighborAddr);
-        }
+        Ipv4Address neighborAddr;
+        ReadFrom(i, neighborAddr);
+        m_neighborList.push_back(neighborAddr);
     }
 
     // m_AnotherRouteCreateFlag = i.ReadU8();
