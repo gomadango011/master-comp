@@ -39,8 +39,6 @@ enum MessageType
     AODVTYPE_RREP = 2,    //!< AODVTYPE_RREP
     AODVTYPE_RERR = 3,    //!< AODVTYPE_RERR
     AODVTYPE_RREP_ACK = 4, //!< AODVTYPE_RREP_ACK
-    AODVTYPE_DetectionReq = 5,  //!< 排他的隣接ノードに別経路を作成してもらうためのリクエストメッセージ
-    AODVTYPE_DETECTION_RESULT = 6  ///!<ステップ2 or 3の判定結果を送信するためのメッセージ 
 };
 
 /**
@@ -154,9 +152,7 @@ class RreqHeader : public Header
                uint32_t dstSeqNo = 0,
                Ipv4Address origin = Ipv4Address(),
                uint32_t originSeqNo = 0,
-               uint8_t WHForwardFlag = 0,
-               bool AnotherRouteCreateFlag = false,
-               std::vector<Ipv4Address> ExcludedList = std::vector<Ipv4Address> ()
+               uint8_t WHForwardFlag = 0
                );
 
     /**
@@ -290,37 +286,37 @@ class RreqHeader : public Header
         return m_WHForwardFlag;
     }
 
-    //別経路作成用のフラグ
-    void SetAnotherRouteCreateFlag(bool f)
-    {
-        m_AnotherRouteCreateFlag = f;
-    }
+    // //別経路作成用のフラグ
+    // void SetAnotherRouteCreateFlag(bool f)
+    // {
+    //     m_AnotherRouteCreateFlag = f;
+    // }
 
-    bool GetAnotherRouteCreateFlag() const
-    {
-        return m_AnotherRouteCreateFlag;
-    }
+    // bool GetAnotherRouteCreateFlag() const
+    // {
+    //     return m_AnotherRouteCreateFlag;
+    // }
 
-    void SetExcludedList(std::vector<Ipv4Address> Exlist)
-    {
-        m_ExcludedList = Exlist;
-    }
+    // void SetExcludedList(std::vector<Ipv4Address> Exlist)
+    // {
+    //     m_ExcludedList = Exlist;
+    // }
 
-    std::vector<Ipv4Address> GetExcludedList() const
-    {
-        return m_ExcludedList;
-    }
+    // std::vector<Ipv4Address> GetExcludedList() const
+    // {
+    //     return m_ExcludedList;
+    // }
 
-    //別経路要求メッセージのID設定・取得
-    void SetDetectionReqID(const uint32_t id)
-    {
-        m_DetectionReqID = id;
-    }
+    // //別経路要求メッセージのID設定・取得
+    // void SetDetectionReqID(const uint32_t id)
+    // {
+    //     m_DetectionReqID = id;
+    // }
 
-    uint32_t GetDetectionReqID() const
-    {
-        return m_DetectionReqID;
-    }
+    // uint32_t GetDetectionReqID() const
+    // {
+    //     return m_DetectionReqID;
+    // }
 
     // Flags
     /**
@@ -371,9 +367,9 @@ class RreqHeader : public Header
     Ipv4Address m_origin;   ///< Originator IP Address
     uint32_t m_originSeqNo; ///< Source Sequence Number
     uint8_t m_WHForwardFlag;///< 内部WH攻撃用転送フラグ
-    bool m_AnotherRouteCreateFlag; ///< 別経路構築用のフラグ
-    std::vector<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
-    uint32_t m_DetectionReqID;
+    //bool m_AnotherRouteCreateFlag; ///< 別経路構築用のフラグ
+    // std::vector<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
+    // uint32_t m_DetectionReqID;
 };
 
 /**
@@ -571,26 +567,26 @@ class RrepHeader : public Header
         return m_neighborList;
     }
 
-    void SetAnotherRouteCreateFlag(const bool f)
-    {
-        m_AnotherRouteCreateFlag = f;
-    }
+    // void SetAnotherRouteCreateFlag(const bool f)
+    // {
+    //     m_AnotherRouteCreateFlag = f;
+    // }
 
-    bool GetAnotherRouteCreateFlag()
-    {
-        return m_AnotherRouteCreateFlag;
-    }
+    // bool GetAnotherRouteCreateFlag()
+    // {
+    //     return m_AnotherRouteCreateFlag;
+    // }
 
-    //別経路要求メッセージのID設定・取得
-    void SetDetectionReqID(const uint32_t id)
-    {
-        m_DetectionReqID = id;
-    }
+    // //別経路要求メッセージのID設定・取得
+    // void SetDetectionReqID(const uint32_t id)
+    // {
+    //     m_DetectionReqID = id;
+    // }
 
-    uint32_t GetDetectionReqID() const
-    {
-        return m_DetectionReqID;
-    }
+    // uint32_t GetDetectionReqID() const
+    // {
+    //     return m_DetectionReqID;
+    // }
 
     // Flags
     /**
@@ -642,8 +638,8 @@ class RrepHeader : public Header
     uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
     float m_NeighborRatio;    ///< 隣接ノード比率
     std::vector<Ipv4Address> m_neighborList; ///< 隣接ノードリスト
-    bool m_AnotherRouteCreateFlag;
-    uint32_t m_DetectionReqID;
+    // bool m_AnotherRouteCreateFlag;
+    // uint32_t m_DetectionReqID;
 };
 
 /**
@@ -803,231 +799,232 @@ std::ostream& operator<<(std::ostream& os, const RerrHeader&);
  
   \endverbatim
 */
-class DetectionRreqHeader : public Header
-{
-  public:
-    /// constructor
-    /** 
-     * @param anotherrouteID 別経路要求用のID
-     * @param origin 送信元アドレス
-     * @param target 検出対象ノードアドレス
-     * @param ExneighborList 排他的隣接ノードのリスト
-     * @param targetNeighborList 検出対象ノードの隣接ノードリスト
-    */
-    DetectionRreqHeader(uint32_t anotherrouteID = 0,
-                        Ipv4Address origin = Ipv4Address(), /*送信元アドレス*/
-                        Ipv4Address target = Ipv4Address(), /*検出対象ノードアドレス*/
-                        std::vector<Ipv4Address> ExneighborList = std::vector<Ipv4Address>(),/*排他的隣接ノードのリスト*/
-                        std::vector<Ipv4Address> targetNeighborList = std::vector<Ipv4Address>()/*検出対象ノードの隣接ノードリスト*/
-                        );
 
-    /**
-     * @brief Get the type ID.
-     * @return the object TypeId
-     */
-    static TypeId GetTypeId();
-    TypeId GetInstanceTypeId() const override;
-    uint32_t GetSerializedSize() const override;
-    void Serialize(Buffer::Iterator start) const override;
-    uint32_t Deserialize(Buffer::Iterator start) override;
-    void Print(std::ostream& os) const override;
+// class DetectionRreqHeader : public Header
+// {
+//   public:
+//     /// constructor
+//     /** 
+//      * @param anotherrouteID 別経路要求用のID
+//      * @param origin 送信元アドレス
+//      * @param target 検出対象ノードアドレス
+//      * @param ExneighborList 排他的隣接ノードのリスト
+//      * @param targetNeighborList 検出対象ノードの隣接ノードリスト
+//     */
+//     DetectionRreqHeader(uint32_t anotherrouteID = 0,
+//                         Ipv4Address origin = Ipv4Address(), /*送信元アドレス*/
+//                         Ipv4Address target = Ipv4Address(), /*検出対象ノードアドレス*/
+//                         std::vector<Ipv4Address> ExneighborList = std::vector<Ipv4Address>(),/*排他的隣接ノードのリスト*/
+//                         std::vector<Ipv4Address> targetNeighborList = std::vector<Ipv4Address>()/*検出対象ノードの隣接ノードリスト*/
+//                         );
 
-    //別経路要求ID設定・取得
-    void SetAnotherRouteID(uint32_t id)
-    {
-        m_anotherrouteID = id;
-    }
+//     /**
+//      * @brief Get the type ID.
+//      * @return the object TypeId
+//      */
+//     static TypeId GetTypeId();
+//     TypeId GetInstanceTypeId() const override;
+//     uint32_t GetSerializedSize() const override;
+//     void Serialize(Buffer::Iterator start) const override;
+//     uint32_t Deserialize(Buffer::Iterator start) override;
+//     void Print(std::ostream& os) const override;
 
-    uint32_t GetAnotherRouteID()
-    {
-        return m_anotherrouteID;
-    }
+//     //別経路要求ID設定・取得
+//     void SetAnotherRouteID(uint32_t id)
+//     {
+//         m_anotherrouteID = id;
+//     }
 
-    // Fields
-    //送信元アドレス設定・取得
-    void SetOrigin(Ipv4Address a)
-    {
-        m_origin = a;
-    }
+//     uint32_t GetAnotherRouteID()
+//     {
+//         return m_anotherrouteID;
+//     }
 
-    Ipv4Address GetOrigin() const
-    {
-        return m_origin;
-    }
+//     // Fields
+//     //送信元アドレス設定・取得
+//     void SetOrigin(Ipv4Address a)
+//     {
+//         m_origin = a;
+//     }
 
-    //検出対象ノードアドレス設定・取得
-    void SetTarget(Ipv4Address a)
-    {
-        m_target = a;
-    }
+//     Ipv4Address GetOrigin() const
+//     {
+//         return m_origin;
+//     }
 
-    Ipv4Address GetTarget() const
-    {
-        return m_target;
-    }
+//     //検出対象ノードアドレス設定・取得
+//     void SetTarget(Ipv4Address a)
+//     {
+//         m_target = a;
+//     }
 
-    //排他的隣接ノードリスト設定・取得
-    void SetExneighborList(const std::vector<Ipv4Address> ExneighborNodeList)
-    {
-        m_ExneighborList = ExneighborNodeList;
-    }
+//     Ipv4Address GetTarget() const
+//     {
+//         return m_target;
+//     }
 
-    const std::vector<Ipv4Address>& GetExneighborList() const
-    {
-        return m_ExneighborList;
-    }
+//     //排他的隣接ノードリスト設定・取得
+//     void SetExneighborList(const std::vector<Ipv4Address> ExneighborNodeList)
+//     {
+//         m_ExneighborList = ExneighborNodeList;
+//     }
 
-    //検出対象ノードの隣接ノードリスト設定・取得
-    void SetTargetNeighborList(const std::vector<Ipv4Address> targetNeighborNodeList)
-    {
-        m_targetNeighborList = targetNeighborNodeList;
-    }
+//     const std::vector<Ipv4Address>& GetExneighborList() const
+//     {
+//         return m_ExneighborList;
+//     }
 
-    const std::vector<Ipv4Address>& GetTargetNeighborList() const
-    {
-        return m_targetNeighborList;
-    }
+//     //検出対象ノードの隣接ノードリスト設定・取得
+//     void SetTargetNeighborList(const std::vector<Ipv4Address> targetNeighborNodeList)
+//     {
+//         m_targetNeighborList = targetNeighborNodeList;
+//     }
 
-    /**
-     * @brief Comparison operator
-     * @param o RREP header to compare
-     * @return true if the RREQ headers are equal
-     */
-    bool operator==(const DetectionRreqHeader& o) const;
+//     const std::vector<Ipv4Address>& GetTargetNeighborList() const
+//     {
+//         return m_targetNeighborList;
+//     }
 
-  private:
-    uint32_t m_anotherrouteID;
-    uint8_t m_reserved; ///< Not used (must be 0)
-    Ipv4Address m_origin;   ///< 送信元アドレス
-    Ipv4Address m_target;   ///< 検出対象ノードアドレス
-    std::vector<Ipv4Address> m_ExneighborList; ///< 排他的隣接ノードリスト
-    std::vector<Ipv4Address> m_targetNeighborList; ///< 検出対象ノードの隣接ノードリスト
-};
+//     /**
+//      * @brief Comparison operator
+//      * @param o RREP header to compare
+//      * @return true if the RREQ headers are equal
+//      */
+//     bool operator==(const DetectionRreqHeader& o) const;
+
+//   private:
+//     uint32_t m_anotherrouteID;
+//     uint8_t m_reserved; ///< Not used (must be 0)
+//     Ipv4Address m_origin;   ///< 送信元アドレス
+//     Ipv4Address m_target;   ///< 検出対象ノードアドレス
+//     std::vector<Ipv4Address> m_ExneighborList; ///< 排他的隣接ノードリスト
+//     std::vector<Ipv4Address> m_targetNeighborList; ///< 検出対象ノードの隣接ノードリスト
+// };
 
 
-//排他的隣接ノードに別経路を構築してもらうためのリクエストヘッダ
-/**
-* @ingroup aodv
-* @brief ステップ２の排他的隣接ノードの別経路探索の検知結果、もしくはステップ３のパケット監視の結果を送信
-  \verbatim
+// //排他的隣接ノードに別経路を構築してもらうためのリクエストヘッダ
+// /**
+// * @ingroup aodv
+// * @brief ステップ２の排他的隣接ノードの別経路探索の検知結果、もしくはステップ３のパケット監視の結果を送信
+//   \verbatim
  
-  \endverbatim
-*/
-class DetectionResultHeader : public Header
-{
-  public:
-    /// constructor
-    /** 
-     * @param anotherrouteID 別経路要求メッセージのID
-     * @param origin 経路要求メッセージの送信元
-     * @param sender　このメッセージの送信元ノード
-     * @param target 検知対象ノード
-     * @param stepflag　ステップ２か３のどちらの検知結果か示すフラグ
-     * @param detectionflag　検知結果を示すフラグ　0：正常ノードと判定  2：WH攻撃と判定
-    */
-    DetectionResultHeader(uint32_t anotherrouteID = 0,
-                          Ipv4Address origin = Ipv4Address(),
-                        Ipv4Address sender = Ipv4Address(),
-                        Ipv4Address target = Ipv4Address(),
-                        uint8_t stepflag = 0,
-                        uint8_t detectionflag = 0 
-                        );
+//   \endverbatim
+// */
+// class DetectionResultHeader : public Header
+// {
+//   public:
+//     /// constructor
+//     /** 
+//      * @param anotherrouteID 別経路要求メッセージのID
+//      * @param origin 経路要求メッセージの送信元
+//      * @param sender　このメッセージの送信元ノード
+//      * @param target 検知対象ノード
+//      * @param stepflag　ステップ２か３のどちらの検知結果か示すフラグ
+//      * @param detectionflag　検知結果を示すフラグ　0：正常ノードと判定  2：WH攻撃と判定
+//     */
+//     DetectionResultHeader(uint32_t anotherrouteID = 0,
+//                           Ipv4Address origin = Ipv4Address(),
+//                         Ipv4Address sender = Ipv4Address(),
+//                         Ipv4Address target = Ipv4Address(),
+//                         uint8_t stepflag = 0,
+//                         uint8_t detectionflag = 0 
+//                         );
 
-    /**
-     * @brief Get the type ID.
-     * @return the object TypeId
-     */
-    static TypeId GetTypeId();
-    TypeId GetInstanceTypeId() const override;
-    uint32_t GetSerializedSize() const override;
-    void Serialize(Buffer::Iterator start) const override;
-    uint32_t Deserialize(Buffer::Iterator start) override;
-    void Print(std::ostream& os) const override;
+//     /**
+//      * @brief Get the type ID.
+//      * @return the object TypeId
+//      */
+//     static TypeId GetTypeId();
+//     TypeId GetInstanceTypeId() const override;
+//     uint32_t GetSerializedSize() const override;
+//     void Serialize(Buffer::Iterator start) const override;
+//     uint32_t Deserialize(Buffer::Iterator start) override;
+//     void Print(std::ostream& os) const override;
 
-    //別経路要求ID設定・取得
-    void SetAnotherRouteID(uint32_t id)
-    {
-        m_anotherrouteID = id;
-    }
+//     //別経路要求ID設定・取得
+//     void SetAnotherRouteID(uint32_t id)
+//     {
+//         m_anotherrouteID = id;
+//     }
 
-    uint32_t GetAnotherRouteID()
-    {
-        return m_anotherrouteID;
-    }
+//     uint32_t GetAnotherRouteID()
+//     {
+//         return m_anotherrouteID;
+//     }
 
-    //別経路要求メッセージの送信元を設定・取得
-    void SetOrigin(Ipv4Address o)
-    {
-        m_origin = o;
-    }
+//     //別経路要求メッセージの送信元を設定・取得
+//     void SetOrigin(Ipv4Address o)
+//     {
+//         m_origin = o;
+//     }
 
-    Ipv4Address GetOrigin()
-    {
-        return m_origin;
-    }
+//     Ipv4Address GetOrigin()
+//     {
+//         return m_origin;
+//     }
 
-    // Fields
-    //送信元アドレス設定・取得
-    void SetSender(Ipv4Address a)
-    {
-        m_sender = a;
-    }
+//     // Fields
+//     //送信元アドレス設定・取得
+//     void SetSender(Ipv4Address a)
+//     {
+//         m_sender = a;
+//     }
 
-    Ipv4Address GetSender() const
-    {
-        return m_sender;
-    }
+//     Ipv4Address GetSender() const
+//     {
+//         return m_sender;
+//     }
 
-    //検知対象ノードを設定・取得
-    void SetTarget(Ipv4Address t)
-    {
-        m_target = t;
-    }
+//     //検知対象ノードを設定・取得
+//     void SetTarget(Ipv4Address t)
+//     {
+//         m_target = t;
+//     }
 
-    Ipv4Address GetTarget()
-    {
-        return m_target;
-    }
+//     Ipv4Address GetTarget()
+//     {
+//         return m_target;
+//     }
 
-    //ステップ2or3で検知した結果か示すフラグ
-    void SetStepFlag(uint8_t f)
-    {
-        m_stepflag = f;
-    }
+//     //ステップ2or3で検知した結果か示すフラグ
+//     void SetStepFlag(uint8_t f)
+//     {
+//         m_stepflag = f;
+//     }
 
-    uint8_t GetStepFlag()
-    {
-        return m_stepflag;
-    }
+//     uint8_t GetStepFlag()
+//     {
+//         return m_stepflag;
+//     }
 
-    //検知結果を示すフラグ
-    void SetDetectionFlag(uint8_t f)
-    {
-        m_detectionflag = f;
-    }
+//     //検知結果を示すフラグ
+//     void SetDetectionFlag(uint8_t f)
+//     {
+//         m_detectionflag = f;
+//     }
 
-    uint8_t GetDetectionFlag()
-    {
-        return m_detectionflag;
-    }
+//     uint8_t GetDetectionFlag()
+//     {
+//         return m_detectionflag;
+//     }
 
-    /**
-     * @brief Comparison operator
-     * @param o RREP header to compare
-     * @return true if the RREQ headers are equal
-     */
-    bool operator==(const DetectionResultHeader& o) const;
+//     /**
+//      * @brief Comparison operator
+//      * @param o RREP header to compare
+//      * @return true if the RREQ headers are equal
+//      */
+//     bool operator==(const DetectionResultHeader& o) const;
 
-  private:
-    uint32_t m_anotherrouteID;  ///< 別経路要求メッセージのID
-    uint8_t m_reserved; ///< Not used (must be 0)
-    Ipv4Address m_origin;  ///< 別経路要求メッセージの送信元IPアドレス
-    Ipv4Address m_sender;   ///< 送信元アドレス
-    Ipv4Address m_target;  ///< 検知対象ノードのIPアドレス
-    uint8_t m_stepflag;   ///< ステップ2か3の検知結果のどちらであるかを示す
-    uint8_t m_detectionflag;   ///< 検知結果を示すフラグ
+//   private:
+//     uint32_t m_anotherrouteID;  ///< 別経路要求メッセージのID
+//     uint8_t m_reserved; ///< Not used (must be 0)
+//     Ipv4Address m_origin;  ///< 別経路要求メッセージの送信元IPアドレス
+//     Ipv4Address m_sender;   ///< 送信元アドレス
+//     Ipv4Address m_target;  ///< 検知対象ノードのIPアドレス
+//     uint8_t m_stepflag;   ///< ステップ2か3の検知結果のどちらであるかを示す
+//     uint8_t m_detectionflag;   ///< 検知結果を示すフラグ
     
-};
+// };
 
 /**
  * @brief Stream output operator

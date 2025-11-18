@@ -305,6 +305,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     // メッセージIDごとにDetectionReq情報を保存
     std::unordered_map<uint32_t, DetectionReqEntry> m_detectionReqCache;
 
+    // ローカルグラフ：各ノード → その隣接ノード一覧
+    std::map<Ipv4Address, std::set<Ipv4Address>> m_localGraph;
+
 
   private:
     /// Start protocol operation
@@ -400,6 +403,11 @@ class RoutingProtocol : public Ipv4RoutingProtocol
 
     //内部WH攻撃　WH攻撃検知開始 →　隣接ノードリスト要求メッセージ送信
     void SendDetectionReq_to_ExNeighbors(const RrepHeader& rrepHeader, const Ipv4Address receiver);
+
+    //排他的隣接ノードの別経路を計算
+    int CalcHopCountBfs(const Ipv4Address &src,
+                        const Ipv4Address &dst,
+                        const std::set<Ipv4Address> &forbidden);
     /**
      * Create loopback route for given header
      *
@@ -474,7 +482,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param dst destination address
      */
 
-    void SendRequest(Ipv4Address dst, bool anothorflag = false, std::vector<Ipv4Address> exlist = std::vector<Ipv4Address> {}, uint32_t messageId = 0);
+    void SendRequest(Ipv4Address dst);
     /** Send RREP
      * @param rreqHeader route request header
      * @param toOrigin routing table entry to originator
