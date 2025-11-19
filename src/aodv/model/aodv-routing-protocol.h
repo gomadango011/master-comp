@@ -308,6 +308,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     // ローカルグラフ：各ノード → その隣接ノード一覧
     std::map<Ipv4Address, std::set<Ipv4Address>> m_localGraph;
 
+    // 送信を一時停止するためのフラグ
+    bool m_sendBlocked;
+
 
   private:
     /// Start protocol operation
@@ -408,6 +411,16 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     int CalcHopCountBfs(const Ipv4Address &src,
                         const Ipv4Address &dst,
                         const std::set<Ipv4Address> &forbidden);
+    
+    /**
+     * ステップ3を開始する関数
+     * 
+     * @param startnode 判定を開始するノード
+     * @param target 判定対象ノード
+     * @param commonNeighbors 共通隣接ノード
+     */
+    void StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, const std::set<ns3::Ipv4Address> NA, const std::set<ns3::Ipv4Address> NB,const std::set<ns3::Ipv4Address> commonNeighbors);
+
     /**
      * Create loopback route for given header
      *
@@ -446,8 +459,14 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     void RecvReplyAck(Ipv4Address neighbor);
 
-    //別経路作成を要求したノードがRREPを受信した場合
-    void ProcessCreateAnotherRoutes(const RrepHeader rrepheader);
+    /**
+     * ステップ3　共通隣接ノードに監視を要求するメッセージを受信した場合の処理
+     * @param p packet
+     * @param receiver 受信ノード
+     * @param src sender address
+     */
+    void RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+
     /**
      * Receive RERR
      * @param p packet
@@ -455,17 +474,6 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     /// Receive  from node with address src
     void RecvError(Ptr<Packet> p, Ipv4Address src);
-
-    /**
-     * 別経路要求メッセージを受信
-     */
-    void RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
-
-    /**
-     * ステップ2 or 3の判定結果メッセージを受信した場合の処理
-     */
-    void RecvDetectionResult(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
-    /** @} */
 
     /**
      * @name Send
@@ -558,9 +566,6 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     Ptr<UniformRandomVariable> m_uniformRandomVariable;
     /// Keep track of the last bcast time
     Time m_lastBcastTime;
-
-    //別経路要求ID
-    uint32_t m_anotherRouteID;
 
 
 };

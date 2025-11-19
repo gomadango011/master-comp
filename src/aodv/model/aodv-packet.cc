@@ -70,7 +70,8 @@ TypeHeader::Deserialize(Buffer::Iterator start)
     case AODVTYPE_RREQ:
     case AODVTYPE_RREP:
     case AODVTYPE_RERR:
-    case AODVTYPE_RREP_ACK:{
+    case AODVTYPE_RREP_ACK:
+    case AODVTYPE_VSR: {
         m_type = (MessageType)type;
         break;
     }
@@ -102,6 +103,9 @@ TypeHeader::Print(std::ostream& os) const
     case AODVTYPE_RREP_ACK: {
         os << "RREP_ACK";
         break;
+    }
+    case AODVTYPE_VSR: {
+        os << "共通隣接ノードに監視させるメッセージヘッダ";
     }
     default:
         os << "UNKNOWN_TYPE";
@@ -747,232 +751,81 @@ operator<<(std::ostream& os, const RerrHeader& h)
 }
 
 //-----------------------------------------------------------------------------
-// DetectionRreqHeader
+// VerificationStartHeader
 //-----------------------------------------------------------------------------
 
-// DetectionRreqHeader::DetectionRreqHeader(uint32_t anotherrouteID,
-//                                          Ipv4Address origin ,
-//                                          Ipv4Address target,
-//                                          std::vector<Ipv4Address> ExneighborList,
-//                                          std::vector<Ipv4Address> targetNeighborList
-//                                         )
-//     : m_anotherrouteID(anotherrouteID),
-//       m_reserved(0),
-//       m_origin(origin),
-//       m_target(target),
-//       m_ExneighborList(ExneighborList),
-//       m_targetNeighborList(targetNeighborList)
-// {
-// }
+VerificationStartHeader::VerificationStartHeader(Ipv4Address origin,
+                                                 Ipv4Address target,
+                                                 Ipv4Address dst)
+    : m_origin(origin),
+      m_target(target),
+      m_destination(dst)
+{
+}
 
-// NS_OBJECT_ENSURE_REGISTERED(DetectionRreqHeader);
+NS_OBJECT_ENSURE_REGISTERED(VerificationStartHeader);
 
-// TypeId
-// DetectionRreqHeader::GetTypeId()
-// {
-//     static TypeId tid = TypeId("ns3::aodv::DetectionRreqHeader")
-//                             .SetParent<Header>()
-//                             .SetGroupName("Aodv")
-//                             .AddConstructor<DetectionRreqHeader>();
-//     return tid;
-// }
+TypeId
+VerificationStartHeader::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::aodv::VerificationStartHeader")
+            .SetParent<Header>()
+            .SetGroupName("Aodv")
+            .AddConstructor<VerificationStartHeader>();
+    return tid;
+}
 
-// TypeId
-// DetectionRreqHeader::GetInstanceTypeId() const
-// {
-//     return GetTypeId();
-// }
+TypeId
+VerificationStartHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
 
-// uint32_t
-// DetectionRreqHeader::GetSerializedSize() const
-// {
-//     return 1
-//            +4 /*別経路要求ID*/
-//            +4 /*送信元IPアドレス*/
-//            +4 /*検知対象のIPアドレス*/
-//            +2 /*排他的隣接ノードリストのサイズ*/
-//            +2 /*検知対象ノードの隣接ノードリストのサイズ*/
-//            +4 * m_ExneighborList.size() /*排他的隣接ノードリスト*/
-//            +4 * m_targetNeighborList.size(); /*検知対象ノードの隣接ノードリスト*/
-// }
+uint32_t
+VerificationStartHeader::GetSerializedSize() const
+{
+    // IPv4Address は 4 byte × 2
+    return 12;
+}
 
-// void
-// DetectionRreqHeader::Serialize(Buffer::Iterator i) const
-// {
-//     i.WriteU8(m_reserved);
-//     i.WriteHtonU32(m_anotherrouteID); // ★ 追加: 別経路要求IDをシリアライズ
-//     WriteTo(i, m_origin);
-//     WriteTo(i, m_target);
+void
+VerificationStartHeader::Serialize(Buffer::Iterator i) const
+{
+    WriteTo(i, m_origin);
+    WriteTo(i, m_target);
+    WriteTo(i, m_destination);
+}
 
-//     i.WriteHtonU16(m_ExneighborList.size());
-//     i.WriteHtonU16(m_targetNeighborList.size());
+uint32_t
+VerificationStartHeader::Deserialize(Buffer::Iterator start)
+{
+    Buffer::Iterator i = start;
 
-//     for (auto addr : m_ExneighborList)
-//         WriteTo(i, addr);
-//     for (auto addr : m_targetNeighborList)
-//         WriteTo(i, addr);
-// }
+    ReadFrom(i, m_origin);
+    ReadFrom(i, m_target);
+    ReadFrom(i,m_destination);
 
-// uint32_t
-// DetectionRreqHeader::Deserialize(Buffer::Iterator start)
-// {
-//     Buffer::Iterator i = start;
-//     m_reserved = i.ReadU8();
-//     m_anotherrouteID = i.ReadNtohU32(); // ★ 追加: 別経路要求IDを復元
-//     ReadFrom(i, m_origin);
-//     ReadFrom(i, m_target);
+    uint32_t dist = i.GetDistanceFrom(start);
+    NS_ASSERT(dist == GetSerializedSize());
+    return dist;
+}
 
-//     uint16_t exSize = i.ReadNtohU16();
-//     uint16_t targetSize = i.ReadNtohU16();
+void
+VerificationStartHeader::Print(std::ostream &os) const
+{
+    os << "VerificationStart: origin=" << m_origin
+       << " target=" << m_target
+       << "宛先ノード" << m_destination;
+}
 
-//     m_ExneighborList.clear();
-//     m_targetNeighborList.clear();
+std::ostream &
+operator<<(std::ostream &os, const VerificationStartHeader &h)
+{
+    h.Print(os);
+    return os;
+}
 
-//     for (uint16_t k = 0; k < exSize; ++k)
-//     {
-//         Ipv4Address addr;
-//         ReadFrom(i, addr);
-//         m_ExneighborList.push_back(addr);
-//     }
-
-//     for (uint16_t k = 0; k < targetSize; ++k)
-//     {
-//         Ipv4Address addr;
-//         ReadFrom(i, addr);
-//         m_targetNeighborList.push_back(addr);
-//     }
-
-//     uint32_t dist = i.GetDistanceFrom(start);
-//     NS_ASSERT(dist == GetSerializedSize());
-//     return dist;
-// }
-
-// void
-// DetectionRreqHeader::Print(std::ostream& os) const
-// {
-//     os << "別経路要求ID=" << m_anotherrouteID
-//        << " 送信元アドレス=" << m_origin
-//        << " 検知対象ノード=" << m_target;
-// }
-
-// bool
-// DetectionRreqHeader::operator==(const DetectionRreqHeader& o) const
-// {
-//     return m_anotherrouteID == o.m_anotherrouteID && m_reserved == o.m_reserved && m_origin == o.m_origin && m_target == o.m_target &&
-//            m_ExneighborList == o.m_ExneighborList && m_targetNeighborList == o.m_targetNeighborList;
-// }
-
-// std::ostream&
-// operator<<(std::ostream& os, const DetectionRreqHeader& h)
-// {
-//     h.Print(os);
-//     return os;
-// }
-
-
-// //-----------------------------------------------------------------------------
-// // DetectionResultHeader
-// //-----------------------------------------------------------------------------
-
-// DetectionResultHeader::DetectionResultHeader(uint32_t anotherrouteID,
-//                                             Ipv4Address origin ,
-//                                             Ipv4Address sender,
-//                                             Ipv4Address target,
-//                                             uint8_t stepflag,
-//                                             uint8_t detectionflag
-//                                             )
-//     : m_anotherrouteID(anotherrouteID),
-//       m_reserved(0),
-//       m_origin(origin),
-//       m_sender(sender),
-//       m_target(target),
-//       m_stepflag(stepflag),
-//       m_detectionflag(detectionflag)
-// {
-// }
-
-// NS_OBJECT_ENSURE_REGISTERED(DetectionResultHeader);
-
-// TypeId
-// DetectionResultHeader::GetTypeId()
-// {
-//     static TypeId tid = TypeId("ns3::aodv::DetectionResultHeader")
-//                             .SetParent<Header>()
-//                             .SetGroupName("Aodv")
-//                             .AddConstructor<DetectionResultHeader>();
-//     return tid;
-// }
-
-// TypeId
-// DetectionResultHeader::GetInstanceTypeId() const
-// {
-//     return GetTypeId();
-// }
-
-// uint32_t
-// DetectionResultHeader::GetSerializedSize() const
-// {
-//     return 1
-//            +4 /*別経路要求ID*/
-//            +4 /*送信元IPアドレス*/
-//            +4 /*このメッセージの送信者のIPアドレス*/
-//            +4 /*検知対象のIPアドレス*/
-//            +2; /*ステップフラグ & 判定結果フラグ*/
-// }
-
-// void
-// DetectionResultHeader::Serialize(Buffer::Iterator i) const
-// {
-//     i.WriteU8(m_reserved);
-//     i.WriteHtonU32(m_anotherrouteID); // ★ 追加: 別経路要求IDをシリアライズ
-//     WriteTo(i, m_origin);
-//     WriteTo(i, m_sender);
-//     WriteTo(i, m_target);
-//     i.WriteU8(m_stepflag);
-//     i.WriteU8(m_detectionflag);
-// }
-
-// uint32_t
-// DetectionResultHeader::Deserialize(Buffer::Iterator start)
-// {
-//     Buffer::Iterator i = start;
-//     m_reserved = i.ReadU8();
-//     m_anotherrouteID = i.ReadNtohU32(); // ★ 追加: 別経路要求IDを復元
-//     ReadFrom(i, m_origin);
-//     ReadFrom(i, m_sender);
-//     ReadFrom(i, m_target);
-//     m_stepflag = i.ReadU8();
-//     m_detectionflag = i.ReadU8();
-
-//     uint32_t dist = i.GetDistanceFrom(start);
-//     NS_ASSERT(dist == GetSerializedSize());
-//     return dist;
-// }
-
-// void
-// DetectionResultHeader::Print(std::ostream& os) const
-// {
-//     os << "別経路要求ID=" << m_anotherrouteID
-//        << "検知開始ノード=" << m_origin
-//        << "このメッセージのセンダー=" << m_sender
-//        << "検知対象ノード=" << m_target
-//        << "ステップフラグ=" << m_stepflag
-//        << "判定結果フラグ=" << m_detectionflag;
-// }
-
-// bool
-// DetectionResultHeader::operator==(const DetectionResultHeader& o) const
-// {
-//     return m_anotherrouteID == o.m_anotherrouteID && m_reserved == o.m_reserved && m_sender == o.m_sender &&m_origin == o.m_origin && m_target == o.m_target &&
-//            m_stepflag == o.m_stepflag && m_detectionflag == o.m_detectionflag;
-// }
-
-// std::ostream&
-// operator<<(std::ostream& os, const DetectionResultHeader& h)
-// {
-//     h.Print(os);
-//     return os;
-// }
 
 } // namespace aodv
 } // namespace ns3

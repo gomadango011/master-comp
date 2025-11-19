@@ -167,12 +167,11 @@ RoutingProtocol::RoutingProtocol()
       m_rreqCount(0),
       m_rerrCount(0),
       m_whNeighborThreshold(1.2f), //隣接ノード比率のしきい値を初期化
+      m_sendBlocked(false),
       m_htimer(Timer::CANCEL_ON_DESTROY),
       m_rreqRateLimitTimer(Timer::CANCEL_ON_DESTROY),
       m_rerrRateLimitTimer(Timer::CANCEL_ON_DESTROY),
-      m_lastBcastTime(),
-      m_anotherRouteID(0)
-      
+      m_lastBcastTime()      
 {
     m_nb.SetCallback(MakeCallback(&RoutingProtocol::SendRerrWhenBreaksLinkToNextHop, this));
 }
@@ -413,6 +412,14 @@ RoutingProtocol::RouteOutput(Ptr<Packet> p,
                              Socket::SocketErrno& sockerr)
 {
     NS_LOG_FUNCTION(this << header << (oif ? oif->GetIfIndex() : 0));
+
+    //ステップ3用の通信ブロック処理
+    if (m_sendBlocked)
+    {
+        NS_LOG_DEBUG("RouteOutputがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
+        return Ptr<Ipv4Route>();
+    }
+
     if (!p)
     {
         NS_LOG_DEBUG("Packet is == 0");
@@ -639,6 +646,14 @@ RoutingProtocol::Forwarding(Ptr<const Packet> p,
                             ErrorCallback ecb)
 {
     NS_LOG_FUNCTION(this);
+
+    //ステップ3用の通信ブロック処理
+    if (m_sendBlocked)
+    {
+        NS_LOG_DEBUG("Forwardingがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
+        return false;
+    }
+    
     Ipv4Address dst = header.GetDestination();
     Ipv4Address origin = header.GetSource();
     m_routingTable.Purge();
@@ -1176,6 +1191,13 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
 void
 RoutingProtocol::SendTo(Ptr<Socket> socket, Ptr<Packet> packet, Ipv4Address destination)
 {
+    //ステップ3用の通信ブロック処理
+    if (m_sendBlocked)
+    {
+        NS_LOG_DEBUG("SendToがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
+        return;
+    }
+
     socket->SendTo(packet, 0, InetSocketAddress(destination, AODV_PORT));
 }
 
@@ -1260,6 +1282,10 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
     }
     case AODVTYPE_RREP_ACK: {
         RecvReplyAck(sender);
+        break;
+    }
+    case AODVTYPE_VSR: {
+        RecvVerificationStart(packet, receiver, sender);
         break;
     }
     }
@@ -2345,167 +2371,155 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
             Time jitter = MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10));
             Simulator::Schedule(jitter, &RoutingProtocol::SendTo, this, socket, packet, destination);
         }
+        return;
     }
 
-    if(rrepHeader.GetWHForwardFlag() == 0 || rrepHeader.GetWHForwardFlag() == 3) //通常のHelloメッセージの場合
+    if(rrepHeader.GetWHForwardFlag() == 0)
     {
-        NS_LOG_DEBUG("転送されずにhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rrepHeader.GetNeighborRatio());
+    NS_LOG_DEBUG("転送されずにhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rrepHeader.GetNeighborRatio());
+    }
 
-        // =========================================================
-        // ここから CREDND ステップ2 用の処理
-        // A: receiver (このノード), B: rrepHeader.GetDst()
-        // =========================================================
+    if(rrepHeader.GetWHForwardFlag() == 3)
+    {
+        NS_LOG_DEBUG("転送されたhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rrepHeader.GetNeighborRatio());
+    }
+    // =========================================================
+    // ここから CREDND ステップ2 用の処理
+    // A: receiver (このノード), B: rrepHeader.GetDst()
+    // =========================================================
 
-        //自身の隣接ノードリストを取得
-        std::set<Ipv4Address> neighborList; //自身の隣接ノードリスト
+    //自身の隣接ノードリストを取得
+    std::set<Ipv4Address> neighborList; //自身の隣接ノードリスト
 
-        for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
-        it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
+    for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
+    it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
+    {
+        const RoutingTableEntry& e = it->second;
+        if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
         {
-            const RoutingTableEntry& e = it->second;
-            if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
-            {
-                NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination());
-                neighborList.insert(e.GetDestination());
-            }
-        }
-
-        // ========== 1. 自分(A) の Neighbor Set に sender を追加 ==========
-
-        Ipv4Address myaddr = m_ipv4->GetAddress(1, 0).GetLocal();
-
-        // グラフに自分(A)のエントリがない場合は作成
-        if (m_localGraph.find(myaddr) == m_localGraph.end())
-        {
-            m_localGraph[myaddr] = neighborList;
-        }
-        else{
-            //自身の隣接ノードリストを更新
-            m_localGraph[myaddr].clear();
-            m_localGraph[myaddr] = neighborList; // = m_nb.GetNeighbors()
-        }
-
-        // ----- NB: B の 1-hop 隣接集合（Hello に含まれる neighborList） -----
-        std::vector<Ipv4Address> targetNeighborVec = rrepHeader.GetNeighborList();
-        std::set<Ipv4Address> NB(targetNeighborVec.begin(), targetNeighborVec.end());
-
-        Ipv4Address helloSender = rrepHeader.GetDst();
-
-        if(m_localGraph.find(helloSender) == m_localGraph.end())
-        {
-            m_localGraph[helloSender] = NB;
-        }else{
-            //自身の隣接ノードリストを更新
-            m_localGraph[helloSender].clear();
-            m_localGraph[helloSender] = NB;
-        }
-
-        // sender を自分(A)の隣接リストに追加
-        if (std::find(m_localGraph[myaddr].begin(),
-                    m_localGraph[myaddr].end(),
-                    helloSender) == m_localGraph[myaddr].end())
-        {
-            m_localGraph[myaddr].insert(helloSender);
-        }
-
-        //受信したhelloパケットの隣接ノード比率が閾値を上回る場合、WH攻撃検知を開始
-        if(rrepHeader.GetNeighborRatio() > m_whNeighborThreshold)
-        {
-            NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst()
-                            << "隣接ノード比率" << rrepHeader.GetNeighborRatio());
-            
-            //排他的隣接ノードリストを作成
-            //排他的隣接ノードリストを作成
-            std::set<Ipv4Address> exclusiveNeighbors;   //排他的隣接ノードリスト
-            std::vector<Ipv4Address> targetNeighborList = rrepHeader.GetNeighborList(); //検知対象ノードの隣接ノードリスト
-
-            //排他的隣接ノードリストを作成
-            for (const auto& n : m_localGraph[myaddr])
-            {
-                // B 自身は EA から除外
-                if (n == helloSender)
-                {
-                    continue;
-                }
-                // NB に含まれていないノードのみ EA に入れる
-                if (NB.find(n) == NB.end())
-                {
-                    NS_LOG_DEBUG("排他的隣接ノードを追加: " << n);
-                    exclusiveNeighbors.insert(n);
-                }
-            }
-
-            // EA のノード数チェック（eA >= 2 でなければ CREDND ステップ2は実行しない）
-            if (exclusiveNeighbors.size() < 2)
-            {
-                NS_LOG_DEBUG("排他的隣接ノード数が 2 未満のため、ステップ2のホップ数判定は実施しません。"
-                             << " eA = " << exclusiveNeighbors.size());
-                // ※本来はここで「隣接比率のみ」で判断する分岐が入る（論文の特例ケース）
-                return;
-            }
-
-            // ========== 2. sender(B) の neighbor list を保存 ==========
-            //vector ⇨ set
-            std::set<Ipv4Address> NList(targetNeighborList.begin(), targetNeighborList.end());
-            m_localGraph[helloSender] = NList;
-
-            //判定対象ノードの隣接ノードリストの型を変更
-            std::set<Ipv4Address> st(targetNeighborList.begin(), targetNeighborList.end());
-
-            int wormholeThreshold = 4;
-            for (auto oi : exclusiveNeighbors) {
-                for (auto oj : exclusiveNeighbors) {
-                    if (oi == oj) continue;
-
-                    //排他的隣接ノードの別経路を計算
-                    int hop = CalcHopCountBfs(oi, oj, st);
-                    NS_LOG_DEBUG("EAノード間のホップ数: oi=" << oi
-                                 << " oj=" << oj
-                                 << " hop=" << hop);
-
-                    if (hop == -1 || hop >= wormholeThreshold) {
-                        NS_LOG_INFO("判定開始ノード：" << receiver << "　判定対象ノード：" << rrepHeader.GetDst() << "　がWH攻撃の影響下にある可能性があります。");
-                        
-                        //WH攻撃の影響下にあるノードとの通信を禁止する
-
-                        return; // wormhole confirmed
-                    }
-                }
-            }
-
-            //ステップ3に移行
-            NS_LOG_DEBUG("ステップ2では以上がありませんでした。ステップ3に移行します。");
-            //SendDetectionReq_to_ExNeighbors(rrepHeader, receiver);
-        }else{
-            NS_LOG_DEBUG("隣接ノード比率が閾値以下のため判定不要　　隣接ノード比率"<< rrepHeader.GetNeighborRatio() << "　　送信元ノード：" << rrepHeader.GetDst());
+            NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination());
+            neighborList.insert(e.GetDestination());
         }
     }
+
+    // ========== 1. 自分(A) の Neighbor Set に sender を追加 ==========
+
+    Ipv4Address myaddr = m_ipv4->GetAddress(1, 0).GetLocal();
+
+    // グラフに自分(A)のエントリがない場合は作成
+    if (m_localGraph.find(myaddr) == m_localGraph.end())
+    {
+        m_localGraph[myaddr] = neighborList;
+    }
+    else{
+        //自身の隣接ノードリストを更新
+        m_localGraph[myaddr].clear();
+        m_localGraph[myaddr] = neighborList; // = m_nb.GetNeighbors()
+    }
+
+    // ----- NB: B の 1-hop 隣接集合（Hello に含まれる neighborList） -----
+    std::vector<Ipv4Address> targetNeighborVec = rrepHeader.GetNeighborList();
+    std::set<Ipv4Address> NB(targetNeighborVec.begin(), targetNeighborVec.end());
+
+    Ipv4Address helloSender = rrepHeader.GetDst();
+
+    if(m_localGraph.find(helloSender) == m_localGraph.end())
+    {
+        m_localGraph[helloSender] = NB;
+    }else{
+        //自身の隣接ノードリストを更新
+        m_localGraph[helloSender].clear();
+        m_localGraph[helloSender] = NB;
+    }
+
+    // sender を自分(A)の隣接リストに追加
+    if (std::find(m_localGraph[myaddr].begin(),
+                m_localGraph[myaddr].end(),
+                helloSender) == m_localGraph[myaddr].end())
+    {
+        m_localGraph[myaddr].insert(helloSender);
+    }
+
+    //受信したhelloパケットの隣接ノード比率が閾値を上回る場合、WH攻撃検知を開始
+    if(rrepHeader.GetNeighborRatio() > m_whNeighborThreshold)
+    {
+        NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst()
+                        << "隣接ノード比率" << rrepHeader.GetNeighborRatio());
+        
+        //排他的隣接ノードリストと共通隣接ノードリストを作成
+        std::set<Ipv4Address> exclusiveNeighbors;   //排他的隣接ノードリスト
+        std::set<Ipv4Address> commonNeighbors;
+        std::vector<Ipv4Address> targetNeighborList = rrepHeader.GetNeighborList(); //検知対象ノードの隣接ノードリスト
+
+        //排他的隣接ノードリストと共通隣接ノードリストを作成
+        for (const auto& n : m_localGraph[myaddr])
+        {
+            // B 自身は EA から除外
+            if (n == helloSender)
+            {
+                continue;
+            }
+            // NB に含まれていないノードのみ EA に入れる
+            if (NB.find(n) == NB.end())
+            {
+                NS_LOG_DEBUG("判定開始ノード：" << myaddr << "　判定対象ノード：" << helloSender <<
+                             "の排他的隣接ノードを追加: " << n);
+                exclusiveNeighbors.insert(n);
+            }else{
+                NS_LOG_DEBUG("判定開始ノード：" << myaddr << "　判定対象ノード：" << helloSender <<
+                             "　の共通隣接ノードを追加：" << n);
+
+                commonNeighbors.insert(n);
+            }
+        }
+
+        // EA のノード数チェック（eA >= 2 でなければ CREDND ステップ2は実行しない）
+        if (exclusiveNeighbors.size() < 2)
+        {
+            NS_LOG_DEBUG("排他的隣接ノード数が 2 未満のため、ステップ2のホップ数判定は実施しません。"
+                            << " eA = " << exclusiveNeighbors.size());
+            // ※本来はここで「隣接比率のみ」で判断する分岐が入る（論文の特例ケース）
             return;
+        }
 
-    // //内部WH　helloパケットにSetWHForwardFlagが立っている場合、相方への転送を行う
-    // if(rrepHeader.GetWHForwardFlag() == 1 || rrepHeader.GetWHForwardFlag() == 2)
-    // {
-    //     NS_LOG_DEBUG("WH転送フラグ付きのHelloメッセージを受信しました。パートナーに転送しています。");
+        // ========== 2. sender(B) の neighbor list を保存 ==========
+        //vector ⇨ set
+        std::set<Ipv4Address> NList(targetNeighborList.begin(), targetNeighborList.end());
+        m_localGraph[helloSender] = NList;
 
-    //     Ipv4Address partner;
-    //     if(rrepHeader.GetWHForwardFlag() == 1)
-    //     {
-    //         partner = Ipv4Address("10.0.0.3");
-    //     }else if(rrepHeader.GetWHForwardFlag() == 2)
-    //     {
-    //         partner = Ipv4Address("10.0.0.2");
-    //     }
+        //判定対象ノードの隣接ノードリストの型を変更
+        std::set<Ipv4Address> st(targetNeighborList.begin(), targetNeighborList.end());
 
-    //     //相方までのルートを取得
-    //     RoutingTableEntry toPartner;
-    //     if (!m_routingTable.LookupRoute(partner, toPartner))
-    //     {
-    //         NS_LOG_DEBUG("中継ノードがパートナーへのルートを見つけられません: " << partner);
-    //         return;
-    //     }
+        int wormholeThreshold = 4;
+        for (auto oi : exclusiveNeighbors) {
+            for (auto oj : exclusiveNeighbors) {
+                if (oi == oj) continue;
 
-    //     ForwardHelloToPartner(rrepHeader, toPartner);
-    // }
+                //排他的隣接ノードの別経路を計算
+                int hop = CalcHopCountBfs(oi, oj, st);
+                NS_LOG_DEBUG("EAノード間のホップ数: oi=" << oi
+                                << " oj=" << oj
+                                << " hop=" << hop);
+
+                if (hop == -1 || hop >= wormholeThreshold) {
+                    NS_LOG_INFO("判定開始ノード：" << receiver << "　判定対象ノード：" << rrepHeader.GetDst() << "　がWH攻撃の影響下にある可能性があります。");
+                    
+                    //WH攻撃の影響下にあるノードとの通信を禁止する
+
+                    return; // wormhole confirmed
+                }
+            }
+        }
+
+        //ステップ3に移行
+        NS_LOG_DEBUG("ステップ2では以上がありませんでした。ステップ3に移行します。");
+        StartStep3Detection(myaddr, helloSender, neighborList, NB, commonNeighbors);
+
+    }else{
+        NS_LOG_DEBUG("隣接ノード比率が閾値以下のため判定不要　　隣接ノード比率"<< rrepHeader.GetNeighborRatio() << "　　送信元ノード：" << rrepHeader.GetDst());
+    }
+
+    return;
 }
 
 // //内部WH攻撃 helloメッセージ転送のための再帰的呼び出し
@@ -2605,6 +2619,31 @@ RoutingProtocol::CalcHopCountBfs(
     return -1;  // unreachable
 }
 
+void
+RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, const std::set<Ipv4Address> NA, const std::set<Ipv4Address> NB, const std::set<Ipv4Address> commonNeighbors)
+{
+    NS_LOG_FUNCTION(this);
+        
+    Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
+
+    NS_LOG_INFO("=== Step3 Detection Start ===");
+    NS_LOG_INFO("判定開始ノード(A): " << myaddr
+                << " 判定対象ノード(B): " << target);
+
+    // -----------------------------
+    // 1. 周辺ノードの送信停止（VerificationStart）
+    // -----------------------------
+    
+
+
+    VerificationStartHeader vsh(myaddr, target);
+}
+
+void
+RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
+{
+    NS_LOG_FUNCTION(this);
+}
 
 // //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
 // void
@@ -2978,7 +3017,7 @@ RoutingProtocol::SendHello()
      it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
     {
         const RoutingTableEntry& e = it->second;
-        if (e.GetHop() == 1 && e.GetFlag() == VALID)
+        if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
         {
             NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination() 
                           << "隣接ノードの隣接ノード数：" << e.GetNeighborCount());
@@ -3051,6 +3090,14 @@ void
 RoutingProtocol::SendPacketFromQueue(Ipv4Address dst, Ptr<Ipv4Route> route)
 {
     NS_LOG_FUNCTION(this);
+
+    //ステップ3用の通信ブロック処理
+    if (m_sendBlocked)
+    {
+        NS_LOG_DEBUG("SendPacketFromQueueがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
+        return;
+    }
+
     QueueEntry queueEntry;
     while (m_queue.Dequeue(dst, queueEntry))
     {
