@@ -420,6 +420,11 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param commonNeighbors 共通隣接ノード
      */
     void StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, const std::set<ns3::Ipv4Address> NA, const std::set<ns3::Ipv4Address> NB,const std::set<ns3::Ipv4Address> commonNeighbors);
+    
+    //ステップ3　認証パケットを送信
+    void SendAuthPacket(Ipv4Address origin,
+                                Ipv4Address target,
+                                const RoutingTableEntry &toTarget);
 
     /**
      * ステップ3を開始する関数
@@ -476,6 +481,14 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param src sender address
      */
     void RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+    
+    /**
+     * ステップ3　認証パケットを受信した場合の処理
+     * @param p packet
+     * @param receiver 受信ノード
+     * @param src sender address
+     */
+    void RecvAuthPacket(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
 
     /**
      * Receive RERR

@@ -1288,6 +1288,9 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
         RecvVerificationStart(packet, receiver, sender);
         break;
     }
+    case AODVTYPE_AUTH: {
+        RecvAuthPacket(packet, receiver, sender);
+    }
     }
 }
 
@@ -2656,8 +2659,47 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, 
         }
     }
 
+    //判定対象ノードへのルーチングテーブルを取得
+    RoutingTableEntry toTarget;
+    if (!m_routingTable.LookupRoute(target, toTarget))
+    {
+        NS_LOG_DEBUG("ステップ3の認証メッセージの判定対象ノード：" << target << "への経路が存在しません。");
+    }
 
-    VerificationStartHeader vsh(myaddr, target);
+    //認証パケットを送信
+    SendAuthPacket(myaddr, target, toTarget);
+
+}
+
+void
+RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const RoutingTableEntry &toTarget)
+{
+    NS_LOG_FUNCTION(this << origin << target);
+
+    AuthPacketHeader auth(origin, target);
+
+    Ptr<Packet> packet = Create<Packet>();
+
+    // TTL は 1 で十分（A→B だけ届けば良い）
+    SocketIpTtlTag ttl;
+    ttl.SetTtl(1);
+    packet->AddPacketTag(ttl);
+
+    // まず TypeHeader
+    TypeHeader tHeader(AODVTYPE_AUTH);
+    packet->AddHeader(tHeader);
+
+    // AuthPacketHeader を追加
+    packet->AddHeader(auth);
+
+    Ptr<Socket> socket = FindSocketWithInterfaceAddress(toTarget.GetInterface());
+    NS_ASSERT(socket);
+
+    NS_LOG_INFO("SendAuthPacket: A=" << origin
+                << " → B=" << target
+                << " nextHop=" << toTarget.GetNextHop());
+
+    socket->SendTo(packet, 0, InetSocketAddress(toTarget.GetNextHop(), AODV_PORT));
 }
 
 //ステップ3　送信停止と監視を要求するメッセージを送信
@@ -2715,6 +2757,36 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
         NS_LOG_DEBUG("判定対象ノード：" << receiver << "が送信元：" << src <<"からステップ３の依頼を受信しました。");
     }
     
+}
+
+void
+RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
+                                Ipv4Address receiver,
+                                Ipv4Address sender)
+{
+    NS_LOG_FUNCTION(this);
+
+    AuthPacketHeader auth;
+    p->RemoveHeader(auth);
+
+    NS_LOG_DEBUG("判定対象ノード：" << receiver << "が判定開始ノード："<< sender << "からの認証メッセージを受信しました。");
+
+    Ipv4Address A = auth.GetOrigin(); //判定開始ノード
+    Ipv4Address B = auth.GetTarget(); //判定対象ノード
+    Ipv4Address myadder = m_ipv4->GetAddress(1,0).GetLocal(); //自身のIP
+
+     // ----- (1) witness の監視 -----　共通隣接ノードが認証メッセージを受信した場合の処理（Aからメッセージを正常に送信されているか、フォワーディングされていないか）
+    // if (m_monitorTable[A][B].monitoring)
+    // {
+    //     m_monitorTable[A][B].sawAuth = true;
+    //     NS_LOG_DEBUG("Monitor(witness): saw AUTH at " << me);
+    // }
+
+    // ----- (2) B（判定対象）だけが Reply を返す -----
+    if (myadder == B)
+    {
+        SendAuthReply(A, B);
+    }
 }
 
 // //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数

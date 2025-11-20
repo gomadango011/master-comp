@@ -71,7 +71,8 @@ TypeHeader::Deserialize(Buffer::Iterator start)
     case AODVTYPE_RREP:
     case AODVTYPE_RERR:
     case AODVTYPE_RREP_ACK:
-    case AODVTYPE_VSR: {
+    case AODVTYPE_VSR: 
+    case AODVTYPE_AUTH :{
         m_type = (MessageType)type;
         break;
     }
@@ -106,6 +107,9 @@ TypeHeader::Print(std::ostream& os) const
     }
     case AODVTYPE_VSR: {
         os << "共通隣接ノードに監視させるメッセージヘッダ";
+    }
+    case AODVTYPE_AUTH : {
+        os << "認証メッセージヘッダ";
     }
     default:
         os << "UNKNOWN_TYPE";
@@ -830,6 +834,68 @@ operator<<(std::ostream &os, const VerificationStartHeader &h)
     return os;
 }
 
+AuthPacketHeader::AuthPacketHeader(Ipv4Address origin,
+                                   Ipv4Address target)
+    : m_origin(origin),
+      m_target(target)
+{
+}
+
+TypeId
+AuthPacketHeader::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::aodv::AuthPacketHeader")
+            .SetParent<Header>()
+            .SetGroupName("Aodv")
+            .AddConstructor<AuthPacketHeader>();
+    return tid;
+}
+
+TypeId
+AuthPacketHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+uint32_t
+AuthPacketHeader::GetSerializedSize() const
+{
+    return 8;
+}
+
+void
+AuthPacketHeader::Serialize(Buffer::Iterator i) const
+{
+    WriteTo(i, m_origin);
+    WriteTo(i, m_target);
+}
+
+uint32_t
+AuthPacketHeader::Deserialize(Buffer::Iterator start)
+{
+    Buffer::Iterator i = start;
+
+    ReadFrom(i, m_origin);
+    ReadFrom(i, m_target);
+
+    uint32_t dist = i.GetDistanceFrom(start);
+    NS_ASSERT(dist == GetSerializedSize());
+    return GetSerializedSize();
+}
+
+void
+AuthPacketHeader::Print(std::ostream &os) const
+{
+    os << "AUTH origin=" << m_origin << " target=" << m_target;
+}
+
+std::ostream &
+operator<<(std::ostream &os, const AuthPacketHeader &h)
+{
+    h.Print(os);
+    return os;
+}
 
 } // namespace aodv
 } // namespace ns3
