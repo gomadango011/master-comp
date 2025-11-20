@@ -814,6 +814,17 @@ public:
         return m_destination;
     }
 
+    //メッセージ送信停止のみを依頼する場合：1　　送信停止かつ監視をいらする場合：2　判定対象ノードに周辺ノードの送信停止を依頼する場合：3 を管理するフラグを設定・取得
+    void SetModeFlag(uint8_t f)
+    {
+        m_modeflag = f;
+    }
+
+    uint8_t GetModeFlag()
+    {
+        return m_modeflag;
+    }
+
     virtual uint32_t GetSerializedSize() const override;
     virtual void Serialize(Buffer::Iterator start) const override;
     virtual uint32_t Deserialize(Buffer::Iterator start) override;
@@ -828,6 +839,7 @@ private:
     Ipv4Address m_origin; // 判定開始ノード A
     Ipv4Address m_target; // 判定対象ノード B
     Ipv4Address m_destination;
+    uint8_t m_modeflag;    //メッセージ送信停止のみを依頼する場合：1　　送信停止かつ監視をいらする場合：2　判定対象ノードに周辺ノードの送信停止を依頼する場合：3 を管理するフラグ
 };
 
 std::ostream &operator<<(std::ostream &os, const VerificationStartHeader &);

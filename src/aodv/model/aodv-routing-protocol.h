@@ -422,6 +422,16 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     void StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, const std::set<ns3::Ipv4Address> NA, const std::set<ns3::Ipv4Address> NB,const std::set<ns3::Ipv4Address> commonNeighbors);
 
     /**
+     * ステップ3を開始する関数
+     * 
+     * @param dst メッセージ送信先ノード
+     * @param origin 判定開始ノード
+     * @param target 判定対象ノード
+     * @param modeFlag 周辺ノードに依頼する内容を示すフラグを建てる
+     */
+    void SendVs(Ipv4Address dst, Ipv4Address origin, Ipv4Address target, uint8_t modeFlag);
+
+    /**
      * Create loopback route for given header
      *
      * @param header the IP header

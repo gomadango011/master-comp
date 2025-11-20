@@ -786,7 +786,7 @@ uint32_t
 VerificationStartHeader::GetSerializedSize() const
 {
     // IPv4Address は 4 byte × 2
-    return 12;
+    return 13;
 }
 
 void
@@ -795,6 +795,8 @@ VerificationStartHeader::Serialize(Buffer::Iterator i) const
     WriteTo(i, m_origin);
     WriteTo(i, m_target);
     WriteTo(i, m_destination);
+    i.WriteU8(m_modeflag);
+
 }
 
 uint32_t
@@ -805,6 +807,7 @@ VerificationStartHeader::Deserialize(Buffer::Iterator start)
     ReadFrom(i, m_origin);
     ReadFrom(i, m_target);
     ReadFrom(i,m_destination);
+    m_modeflag = i.ReadU8();
 
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
@@ -816,7 +819,8 @@ VerificationStartHeader::Print(std::ostream &os) const
 {
     os << "VerificationStart: origin=" << m_origin
        << " target=" << m_target
-       << "宛先ノード" << m_destination;
+       << "宛先ノード" << m_destination
+       << "Mode Flag" << m_modeflag;
 }
 
 std::ostream &

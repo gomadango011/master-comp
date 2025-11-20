@@ -2631,18 +2631,90 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, 
                 << " 判定対象ノード(B): " << target);
 
     // -----------------------------
-    // 1. 周辺ノードの送信停止（VerificationStart）
+    // 1. 周辺ノードの送信停止と共通隣接ノードに関し依頼を行う（VerificationStart）
     // -----------------------------
     
+    for(auto n : NA)
+    {
+        if (commonNeighbors.count(n) == 0) {
+            //判定対象ノードにメッセージを送信する場合
+            if(n == target)
+            {
+                NS_LOG_DEBUG("判定開始ノード：" << myaddr << " が判定対象ノード：" << n << "に送信停止依頼を行います。");
+                //2 = 判定対象ノードに周辺ノードへ送信停止を依頼する
+                SendVs(n, myaddr, target, 2);
+            }
+            NS_LOG_DEBUG("判定開始ノード：" << myaddr << " が判定開始ノードの排他的隣接ノード：" << n << "に送信停止依頼を行います。");
+
+            //0 = 監視のみ
+            SendVs(n, myaddr, target, 0);  // ← 非共通ノードだけ
+        }else{
+            NS_LOG_DEBUG("判定開始ノード：" << myaddr << " が共通隣接ノード：" << n << "に送信停止と監視依頼を行います。");
+
+            //共通隣接ノードの場合、1 = 送信停止かつ監視依頼を行う
+            SendVs(n, myaddr, target, 1);
+        }
+    }
 
 
     VerificationStartHeader vsh(myaddr, target);
+}
+
+//ステップ3　送信停止と監視を要求するメッセージを送信
+void
+RoutingProtocol::SendVs(Ipv4Address dst, Ipv4Address origin, Ipv4Address target, uint8_t modeFlag)
+{
+    NS_LOG_FUNCTION(this << dst << origin << target << (uint32_t)modeFlag);
+
+    // VS メッセージヘッダを構築
+    VerificationStartHeader vsh(origin, target, dst);
+    vsh.SetModeFlag(modeFlag);
+
+    //宛先へのルーチングテーブルを取得
+    RoutingTableEntry toDst;
+    if (!m_routingTable.LookupRoute(dst, toDst))
+    {
+        NS_LOG_DEBUG("ステップ3のリクエストの宛先ノード：" << dst << "への経路が存在しません。");
+    }
+
+    // AODV 用ソケットから送信
+    NS_LOG_INFO("SendVs: 送信先=" << dst
+                << "  origin=" << origin
+                << "  target=" << target
+                << "  modeFlag=" << (uint32_t)modeFlag);
+
+    Ptr<Packet> packet = Create<Packet>();
+    SocketIpTtlTag tag;
+    tag.SetTtl(1);
+    packet->AddPacketTag(tag);
+    packet->AddHeader(vsh);
+    TypeHeader tHeader(AODVTYPE_VSR);
+    packet->AddHeader(tHeader);
+    Ptr<Socket> socket = FindSocketWithInterfaceAddress(toDst.GetInterface());
+    NS_ASSERT(socket);
+    socket->SendTo(packet, 0, InetSocketAddress(toDst.GetNextHop(), AODV_PORT));
 }
 
 void
 RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
 {
     NS_LOG_FUNCTION(this);
+
+    VerificationStartHeader vsh;
+    p->RemoveHeader(vsh);
+    if(vsh.GetModeFlag() == 0)
+    {
+        NS_LOG_DEBUG(receiver << "が送信元：" << src <<"から送信停止要求メッセージを受信しました。");
+    }
+    if(vsh.GetModeFlag() == 1)
+    {
+        NS_LOG_DEBUG(receiver << "が送信元：" << src <<"から送信停止・監視要求とメッセージを受信しました。");
+    }
+    if(vsh.GetModeFlag() == 2)
+    {
+        NS_LOG_DEBUG("判定対象ノード：" << receiver << "が送信元：" << src <<"からステップ３の依頼を受信しました。");
+    }
+    
 }
 
 // //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
