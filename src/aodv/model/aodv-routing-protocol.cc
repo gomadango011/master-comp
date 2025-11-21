@@ -1291,6 +1291,9 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
     case AODVTYPE_AUTH: {
         RecvAuthPacket(packet, receiver, sender);
     }
+    case AODVTYPE_AUTHREP: {
+        RecvAuthReply(packet, receiver, sender);
+    }
     }
 }
 
@@ -2787,6 +2790,53 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
     {
         SendAuthReply(A, B);
     }
+}
+
+void
+RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender)
+{
+    NS_LOG_FUNCTION(this);
+}
+
+void
+RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target)
+{
+    NS_LOG_FUNCTION(this << origin << target);
+
+    // --- 1. AuthReplyHeader 作成 ---
+    AuthReplyHeader rep;
+    rep.SetOrigin(origin);      // 判定開始ノード
+    rep.SetTarget(target);  // 判定対象ノード
+
+    // ルーティングテーブルから A への経路を取得
+    RoutingTableEntry toA;
+    if (!m_routingTable.LookupRoute(origin, toA))
+    {
+        NS_LOG_ERROR("SendAuthReply: route to A not found: " << origin);
+        return;
+    }
+
+    Ptr<Packet> packet = Create<Packet>();
+    // TTL は 1 で十分（A→B だけ届けば良い）
+    SocketIpTtlTag ttl;
+    ttl.SetTtl(1);
+    packet->AddPacketTag(ttl);
+
+    // まず TypeHeader
+    TypeHeader tHeader(AODVTYPE_AUTH);
+    packet->AddHeader(tHeader);
+
+    // AuthPacketHeader を追加
+    packet->AddHeader(rep);
+
+    Ptr<Socket> socket = FindSocketWithInterfaceAddress(toA.GetInterface());
+    NS_ASSERT(socket);
+
+    NS_LOG_INFO("SendAuthPacketReply: 判定開始ノード=" << origin
+                << " → 判定対象ノード=" << target
+                << " nextHop=" << toA.GetNextHop());
+
+    socket->SendTo(packet, 0, InetSocketAddress(toA.GetNextHop(), AODV_PORT));
 }
 
 // //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数

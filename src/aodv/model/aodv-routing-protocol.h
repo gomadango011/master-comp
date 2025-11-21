@@ -437,6 +437,14 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     void SendVs(Ipv4Address dst, Ipv4Address origin, Ipv4Address target, uint8_t modeFlag);
 
     /**
+     * ステップ3を開始する関数
+     * 
+     * @param origin 判定開始ノード
+     * @param target 判定対象ノード
+     */
+    void SendAuthReply(Ipv4Address origin, Ipv4Address target);
+
+    /**
      * Create loopback route for given header
      *
      * @param header the IP header
@@ -489,6 +497,14 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param src sender address
      */
     void RecvAuthPacket(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+
+    /**
+     * ステップ3　認証返送パケットを受信した場合の処理
+     * @param p packet
+     * @param receiver 受信ノード
+     * @param src sender address
+     */
+    void RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
 
     /**
      * Receive RERR

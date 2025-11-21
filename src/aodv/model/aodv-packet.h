@@ -40,7 +40,8 @@ enum MessageType
     AODVTYPE_RERR = 3,    //!< AODVTYPE_RERR
     AODVTYPE_RREP_ACK = 4, //!< AODVTYPE_RREP_ACK
     AODVTYPE_VSR = 5,
-    AODVTYPE_AUTH = 6    //ステップ３認証パケット用
+    AODVTYPE_AUTH = 6,    //ステップ３認証パケット用
+    AODVTYPE_AUTHREP = 7
 };
 
 /**
@@ -892,6 +893,40 @@ private:
 
 std::ostream &operator<<(std::ostream &os, const AuthPacketHeader &h);
 
+
+//-----------------------------------------------------------------------------
+// AuthReplyHeader
+//-----------------------------------------------------------------------------
+// AODV Step3 : B → A の応答パケットヘッダ
+//-----------------------------------------------------------------------------
+class AuthReplyHeader : public Header
+{
+public:
+    AuthReplyHeader(Ipv4Address origin = Ipv4Address(),   // A
+                    Ipv4Address target = Ipv4Address()
+                    );   // B
+
+    static TypeId GetTypeId();
+    virtual TypeId GetInstanceTypeId() const override;
+
+    // Setter / Getter
+    void SetOrigin(Ipv4Address a) { m_origin = a; }
+    void SetTarget(Ipv4Address a) { m_target = a; }
+
+    Ipv4Address GetOrigin() const { return m_origin; }
+    Ipv4Address GetTarget() const { return m_target; }
+
+    virtual uint32_t GetSerializedSize() const override;
+    virtual void Serialize(Buffer::Iterator start) const override;
+    virtual uint32_t Deserialize(Buffer::Iterator start) override;
+    virtual void Print(std::ostream &os) const override;
+
+private:
+    Ipv4Address m_origin;  // 判定開始ノード
+    Ipv4Address m_target;  // 判定対象ノード
+};
+
+std::ostream &operator<<(std::ostream &os, const AuthReplyHeader &h);
 
 
 } // namespace aodv

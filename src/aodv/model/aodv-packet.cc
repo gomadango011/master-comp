@@ -72,7 +72,8 @@ TypeHeader::Deserialize(Buffer::Iterator start)
     case AODVTYPE_RERR:
     case AODVTYPE_RREP_ACK:
     case AODVTYPE_VSR: 
-    case AODVTYPE_AUTH :{
+    case AODVTYPE_AUTH :
+    case AODVTYPE_AUTHREP :{
         m_type = (MessageType)type;
         break;
     }
@@ -834,6 +835,9 @@ operator<<(std::ostream &os, const VerificationStartHeader &h)
     return os;
 }
 
+//-----------------------------------------------------------------------------
+// AuthHeader
+//-----------------------------------------------------------------------------
 AuthPacketHeader::AuthPacketHeader(Ipv4Address origin,
                                    Ipv4Address target)
     : m_origin(origin),
@@ -892,6 +896,73 @@ AuthPacketHeader::Print(std::ostream &os) const
 
 std::ostream &
 operator<<(std::ostream &os, const AuthPacketHeader &h)
+{
+    h.Print(os);
+    return os;
+}
+
+//-----------------------------------------------------------------------------
+// AuthReplyHeader
+//-----------------------------------------------------------------------------
+AuthReplyHeader::AuthReplyHeader(Ipv4Address origin,
+                                   Ipv4Address target)
+    : m_origin(origin),
+      m_target(target)
+{
+}
+
+TypeId
+AuthReplyHeader::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::aodv::AuthReplyHeader")
+            .SetParent<Header>()
+            .SetGroupName("Aodv")
+            .AddConstructor<AuthReplyHeader>();
+
+    return tid;
+}
+
+TypeId
+AuthReplyHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+uint32_t
+AuthReplyHeader::GetSerializedSize() const
+{
+    return 8;
+}
+
+void
+AuthReplyHeader::Serialize(Buffer::Iterator i) const
+{
+    WriteTo(i, m_origin);
+    WriteTo(i, m_target);
+}
+
+uint32_t
+AuthReplyHeader::Deserialize(Buffer::Iterator start)
+{
+    Buffer::Iterator i = start;
+
+    ReadFrom(i, m_origin);
+    ReadFrom(i, m_target);
+
+    uint32_t dist = i.GetDistanceFrom(start);
+    NS_ASSERT(dist == GetSerializedSize());
+    return GetSerializedSize();
+}
+
+void
+AuthReplyHeader::Print(std::ostream &os) const
+{
+    os << "AUTH origin=" << m_origin << " target=" << m_target;
+}
+
+std::ostream &
+operator<<(std::ostream &os, const AuthReplyHeader &h)
 {
     h.Print(os);
     return os;
