@@ -112,6 +112,9 @@ TypeHeader::Print(std::ostream& os) const
     case AODVTYPE_AUTH : {
         os << "認証メッセージヘッダ";
     }
+    case AODVTYPE_AUTHREP : {
+        os << "認証返送メッセージヘッダ";
+    }
     default:
         os << "UNKNOWN_TYPE";
     }

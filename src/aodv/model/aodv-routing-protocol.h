@@ -311,6 +311,27 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     // 送信を一時停止するためのフラグ
     bool m_sendBlocked;
 
+    //ステップ3用　送信停止・監視・AUTHパケットの受信状況を管理
+    struct Step3Entry
+    {
+        bool monitoring = false;   // 監視モードか
+        bool isWitness = false;    // 共通隣接ノードか
+        bool isTarget = false;     // B かどうか
+        bool pauseTx = false;      // 送信停止
+
+        bool sawAuth = false;      // AUTH を受信した
+        bool sawForward = false;   // AUTH がフォワードされた
+        bool sawReply = false;     // AUTHREP を受信した
+
+        bool authSenderIsOrigin   = false; // AUTH を送ってきた IP が origin だったか
+        bool replySenderIsTarget  = false; // AUTHREP を送ってきた IP が target だったか
+
+        Ipv4Address witness;       // witness のIP
+        Time startTime;            // Step3 開始時刻
+    };
+
+    // A と B の組み合わせごとに Step3 の管理を行う
+    std::map<Ipv4Address, std::map<Ipv4Address, Step3Entry>> m_monitorTable;
 
   private:
     /// Start protocol operation
@@ -421,6 +442,13 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     void StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, const std::set<ns3::Ipv4Address> NA, const std::set<ns3::Ipv4Address> NB,const std::set<ns3::Ipv4Address> commonNeighbors);
     
+    bool PromiscSniff(Ptr<NetDevice> dev,
+                              Ptr<const Packet> packet,
+                              uint16_t protocol,
+                              const Address &src,
+                              const Address &dst,
+                              NetDevice::PacketType type);
+
     //ステップ3　認証パケットを送信
     void SendAuthPacket(Ipv4Address origin,
                                 Ipv4Address target,

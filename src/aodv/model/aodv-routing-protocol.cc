@@ -29,6 +29,8 @@
 #include "ns3/udp-socket-factory.h"
 #include "ns3/wifi-mpdu.h"
 #include "ns3/wifi-net-device.h"
+#include "ns3/icmpv4-l4-protocol.h"
+
 
 #include <algorithm>
 #include <limits>
@@ -403,6 +405,10 @@ RoutingProtocol::Start()
 
     m_rerrRateLimitTimer.SetFunction(&RoutingProtocol::RerrRateLimitTimerExpire, this);
     m_rerrRateLimitTimer.Schedule(Seconds(1));
+
+    //ステップ3用のコールバックを設定
+    Ptr<NetDevice> dev = m_ipv4->GetNetDevice(1);
+    dev->SetPromiscReceiveCallback(MakeCallback(&RoutingProtocol::PromiscSniff, this));
 }
 
 Ptr<Ipv4Route>
@@ -1290,9 +1296,11 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
     }
     case AODVTYPE_AUTH: {
         RecvAuthPacket(packet, receiver, sender);
+        break;
     }
     case AODVTYPE_AUTHREP: {
         RecvAuthReply(packet, receiver, sender);
+        break;
     }
     }
 }
@@ -2674,10 +2682,228 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, 
 
 }
 
+bool
+RoutingProtocol::PromiscSniff(Ptr<NetDevice> dev,
+                              Ptr<const Packet> packet,
+                              uint16_t protocol,
+                              const Address &src,
+                              const Address &dst,
+                              NetDevice::PacketType type)
+{
+    // 自分の IP
+    Ipv4Address me = m_ipv4->GetAddress(1,0).GetLocal();
+
+    NS_LOG_DEBUG("PromiscSniffが開始されました");
+
+    // パケットを解析用にコピー
+    Ptr<Packet> p = packet->Copy();
+
+    // ======================================================
+    // (1) AODVでなければ終了
+    // ======================================================
+    // L3 が IPv4 でなければ終了
+    if (protocol != Ipv4L3Protocol::PROT_NUMBER)
+    {
+        return true;
+    }
+
+    Ipv4Header ip;
+    if (!p->RemoveHeader(ip))
+    {
+        return true;
+    }
+
+    // トランスポートが UDP でなければ終了
+    if (ip.GetProtocol() != UdpL4Protocol::PROT_NUMBER)
+    {
+        return true;
+    }
+
+    UdpHeader udp;
+    p->RemoveHeader(udp);
+
+    // AODV ポート宛以外なら終了
+    if (udp.GetDestinationPort() != AODV_PORT)
+    {
+        return true;
+    }
+
+    // AODV TypeHeader を確認
+    TypeHeader tHeader;
+    p->PeekHeader(tHeader);
+
+    // AUTH / AUTHREP 以外は Step3 対象外
+    if (tHeader.Get() != AODVTYPE_AUTH &&
+        tHeader.Get() != AODVTYPE_AUTHREP)
+    {
+        return true;
+    }
+
+    // ======================================================
+    // (2) AUTH / AUTHREP の origin/target を読み取る
+    // ======================================================
+    Ipv4Address origin; // 判定開始ノード A
+    Ipv4Address target; // 判定対象ノード B
+
+    // Peek した TypeHeader を実際に消費
+    p->RemoveHeader(tHeader);
+
+    if (tHeader.Get() == AODVTYPE_AUTH)
+    {
+        AuthPacketHeader auth;
+        p->RemoveHeader(auth);
+        origin = auth.GetOrigin();
+        target = auth.GetTarget();
+    }
+    else if (tHeader.Get() == AODVTYPE_AUTHREP)
+    {
+        AuthReplyHeader authRep;
+        p->RemoveHeader(authRep);
+        origin = authRep.GetOrigin();
+        target = authRep.GetTarget();
+    }
+
+    // ======================================================
+    // (3) origin/targetの組み合わせが監視対象か確認
+    // ======================================================
+    auto itA = m_monitorTable.find(origin);
+    if (itA == m_monitorTable.end())
+    {
+        // この (origin,target) は監視対象外
+        return true;
+    }
+
+    auto itB = itA->second.find(target);
+    if (itB == itA->second.end())
+    {
+        return true;
+    }
+
+    auto &entry = itB->second;
+
+    // 監視モードでなければ何もしない
+    if (!entry.monitoring || !entry.isWitness)
+    {
+        return true;
+    }
+
+    // ======================================================
+    // (4)  実際の送信者が origin/target か確認(結果を記録)
+    // ======================================================
+    Ipv4Address ipSender = ip.GetSource();  // 実際の送信元 IP
+
+    if (tHeader.Get() == AODVTYPE_AUTH)
+    {
+        // 認証メッセージ（A→B）の監視結果
+        entry.sawAuth = true;
+
+        if (ipSender == origin)
+        {
+            // origin 自身が送った AUTH を観測
+            entry.authSenderIsOrigin = true;   // ← Step3Entry に追加しておくと便利
+            NS_LOG_DEBUG("[Step3][witness=" << me << "] AUTH を origin="
+                          << origin << " から直接受信");
+        }
+        else
+        {
+            // origin 以外から AUTH が来た → 転送 or 偽装の可能性
+            entry.authSenderIsOrigin = false;
+            entry.sawForward = true;
+            NS_LOG_DEBUG("[Step3][witness=" << me
+                          << "] AUTH ヘッダは origin=" << origin
+                          << " だが実際の送信者は " << ipSender
+                          << " （転送/偽装の可能性）");
+        }
+    }
+    else if (tHeader.Get() == AODVTYPE_AUTHREP)
+    {
+        // 認証応答メッセージ（B→A）の監視結果
+        entry.sawReply = true;
+
+        if (ipSender == target)
+        {
+            // target 自身が送った AUTHREP
+            entry.replySenderIsTarget = true;  // ← Step3Entry に追加
+            NS_LOG_DEBUG("[Step3][witness=" << me << "] AUTHREP を target="
+                          << target << " から直接受信");
+        }
+        else
+        {
+            // target 以外から AUTHREP が来ている → 転送/偽装の可能性
+            entry.replySenderIsTarget = false;
+            entry.sawForward = true;
+            NS_LOG_DEBUG("[Step3][witness=" << me
+                          << "] AUTHREP ヘッダは target=" << target
+                          << " だが実際の送信者は " << ipSender
+                          << " （転送/偽装の可能性）");
+        }
+
+        //　判定開始ノードに判定結果を送信し、送信・監視を停止、エントリを削除
+    }
+
+    // MAC アドレス表示用
+    Mac48Address macSrc = Mac48Address::ConvertFrom(src);
+    Mac48Address macDst = Mac48Address::ConvertFrom(dst);
+
+    Ipv4Address ipSrc = ip.GetSource();
+    Ipv4Address ipDst = ip.GetDestination();
+    uint8_t proto = ip.GetProtocol();   // TCP / UDP / ICMP / AODV(UDP)
+
+    // --- (2) パケットタイプ文字列化 ---
+    std::string typeStr;
+    switch (type)
+    {
+    case NetDevice::PACKET_HOST:         typeStr = "HOST(自分宛)"; break;
+    case NetDevice::PACKET_OTHERHOST:    typeStr = "OTHERHOST(他宛)"; break;
+    case NetDevice::PACKET_BROADCAST:    typeStr = "BROADCAST"; break;
+    case NetDevice::PACKET_MULTICAST:    typeStr = "MULTICAST"; break;
+    default: typeStr = "UNKNOWN"; break;
+    }
+
+    // --- (4) UDP（AODV）か？ ---
+    if (proto == UdpL4Protocol::PROT_NUMBER)
+    {
+        UdpHeader udp;
+        p->RemoveHeader(udp);
+
+        if (udp.GetDestinationPort() == AODV_PORT)
+        {
+            // AODV TypeHeader を読む
+            TypeHeader tHeader;
+            p->PeekHeader(tHeader);
+
+            std::string msg = "UNKNOWN";
+            switch(tHeader.Get())
+            {
+            case AODVTYPE_RREQ:      msg = "RREQ"; break;
+            case AODVTYPE_RREP:      msg = "RREP"; break;
+            case AODVTYPE_RERR:      msg = "RERR"; break;
+            case AODVTYPE_RREP_ACK:  msg = "RREP_ACK"; break;
+            case AODVTYPE_VSR:       msg = "VSR(監視要求)"; break;
+            case AODVTYPE_AUTH:      msg = "AUTH"; break;
+            case AODVTYPE_AUTHREP:   msg = "AUTHREP"; break;
+            default:                 msg = "AODV_UNKNOWN"; break;
+            }
+
+            NS_LOG_INFO("[Promisc][" << me << "] AODV受信: "
+                        << msg
+                        << "  srcIP=" << ipSrc
+                        << " → dstIP=" << ipDst
+                        << "  MACsrc=" << macSrc
+                        << " → MACdst=" << macDst
+                        << "  frame=" << typeStr);
+        }
+    }
+    return true;
+}
+
+
 void
 RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const RoutingTableEntry &toTarget)
 {
     NS_LOG_FUNCTION(this << origin << target);
+
+    NS_LOG_DEBUG("判定開始ノード：" << origin << "が判定対象ノード："<< target << "へ認証メッセージを送信しようとしています。");
 
     AuthPacketHeader auth(origin, target);
 
@@ -2688,12 +2914,12 @@ RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const Ro
     ttl.SetTtl(1);
     packet->AddPacketTag(ttl);
 
-    // まず TypeHeader
-    TypeHeader tHeader(AODVTYPE_AUTH);
-    packet->AddHeader(tHeader);
-
     // AuthPacketHeader を追加
     packet->AddHeader(auth);
+
+    //TypeHeader
+    TypeHeader tHeader(AODVTYPE_AUTH);
+    packet->AddHeader(tHeader);
 
     Ptr<Socket> socket = FindSocketWithInterfaceAddress(toTarget.GetInterface());
     NS_ASSERT(socket);
@@ -2747,19 +2973,130 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
 
     VerificationStartHeader vsh;
     p->RemoveHeader(vsh);
-    if(vsh.GetModeFlag() == 0)
+
+    Ipv4Address A = vsh.GetOrigin();   // 判定開始ノード
+    Ipv4Address B = vsh.GetTarget();   // 判定対象ノード
+
+    uint8_t flag = vsh.GetModeFlag();  // 0:停止, 1:停止+監視, 2:Bのみ通知
+
+    if(flag == 0)
     {
         NS_LOG_DEBUG(receiver << "が送信元：" << src <<"から送信停止要求メッセージを受信しました。");
     }
-    if(vsh.GetModeFlag() == 1)
+    if(flag == 1)
     {
         NS_LOG_DEBUG(receiver << "が送信元：" << src <<"から送信停止・監視要求とメッセージを受信しました。");
     }
-    if(vsh.GetModeFlag() == 2)
+    if(flag == 2)
     {
         NS_LOG_DEBUG("判定対象ノード：" << receiver << "が送信元：" << src <<"からステップ３の依頼を受信しました。");
     }
     
+    // -------------------------------
+    // (1) 判定対象ノード B の場合
+    // -------------------------------
+    if (flag == 2 && receiver == B)
+    {
+        // B は AUTHREP を返すだけなので監視は不要
+        auto &entry = m_monitorTable[A][B];
+        entry.isTarget = true;
+        entry.monitoring = false;
+
+        NS_LOG_DEBUG("判定対象ノード："<< B << "が送信停止依頼を受信しました");
+
+        //------------------------------------------------------------------
+        // (追加処理) B の排他的隣接ノードに送信停止フラグ ModeFlag=0 を送る
+        //------------------------------------------------------------------
+
+        // B の隣接ノードリスト
+        auto itB = m_localGraph.find(B);
+        if (itB == m_localGraph.end())
+        {
+            NS_LOG_WARN("[Step3] B の隣接ノードリストが存在しません: " << B);
+            return;
+        }
+        const auto &neighborsB = itB->second;
+
+        auto itA = m_localGraph.find(A);
+        if (itA == m_localGraph.end())
+        {
+            NS_LOG_WARN("[Step3] A の隣接ノードリストが存在しません: " << A);
+        }
+        const auto &neighborsA = itA->second;
+
+        // B の排他的隣接ノード = neighborsB - neighborsA
+        std::set<Ipv4Address> exNeighborsB;
+        for (auto n : neighborsB)
+        {
+            if(n == A)
+            {
+                continue;
+            }
+            if (neighborsA.count(n) == 0)
+            {
+                exNeighborsB.insert(n);
+            }
+        }
+
+        NS_LOG_DEBUG("[Step3] B=" << B << " の排他的隣接ノード数: " 
+                      << exNeighborsB.size());
+
+         // 排他的隣接ノードへ ModeFlag=0（送信停止要求）送信
+        for (Ipv4Address ex : exNeighborsB)
+        {
+            SendVs(ex, A, B, 0);   // ModeFlag=0 = 送信停止要求
+            NS_LOG_DEBUG("[Step3] B=" << B 
+                          << " → 排他的隣接ノード " << ex 
+                          << " へ ModeFlag=0(送信停止要請) を送信");
+        }
+
+        return;
+    }
+
+    // -------------------------------
+    // (2) witness（共通隣接ノード）が監視を開始（ModeFlag=1）
+    // -------------------------------
+    if (flag == 1)
+    {
+        auto &entry = m_monitorTable[A][B];
+
+        //送信停止
+        m_sendBlocked = true;
+
+        entry.isWitness  = true;      // 共通隣接ノード
+        entry.monitoring = true;      // PromiscSniff が処理すべき
+        entry.pauseTx    = true;      // Step3 中の送信停止
+
+        entry.sawAuth    = false;
+        entry.sawForward = false;
+        entry.sawReply   = false;
+
+        entry.startTime = Simulator::Now();
+
+        NS_LOG_DEBUG("[Step3] Node " << receiver 
+                      << " が witness として監視を開始（A=" 
+                      << A << ", B=" << B << "）");
+        return;
+    }
+
+    //----------------------------------------------------
+    // ModeFlag=0 : 排他的隣接ノードが送信停止（Step3）
+    //----------------------------------------------------
+    if (flag == 0)
+    {
+        NS_LOG_DEBUG("[Step3] 排他的隣接ノード " << receiver
+                      << " が送信停止要求を受信 (A=" << A << ", B=" << B << ")");
+
+        m_sendBlocked = true;
+
+        // Step3専用のフラグとして扱う
+        auto &entry = m_monitorTable[A][B];
+        entry.pauseTx = true;
+
+        // ※監視停止はしない。排他的隣接ノードは元々監視者ではない。
+        return;
+    }
+
 }
 
 void
@@ -2796,12 +3133,16 @@ void
 RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender)
 {
     NS_LOG_FUNCTION(this);
+
+    NS_LOG_DEBUG("判定開始ノード：" << receiver << "が判定対象ノード："<< sender << "からの認証返信メッセージを受信しました。");
 }
 
 void
 RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target)
 {
     NS_LOG_FUNCTION(this << origin << target);
+
+    NS_LOG_DEBUG("判定対象ノード：" << target << "が判定開始ノード："<< origin << "へ認証返信メッセージを送信しようとしています。");
 
     // --- 1. AuthReplyHeader 作成 ---
     AuthReplyHeader rep;
