@@ -145,7 +145,7 @@ RoutingProtocol::RoutingProtocol()
       m_rerrRateLimit(10),
       m_activeRouteTimeout(Seconds(3)),
       m_netDiameter(35),
-      m_nodeTraversalTime(MilliSeconds(40)),
+      m_nodeTraversalTime(MilliSeconds(40)),  //1ホップの平均通信時間
       m_netTraversalTime(Time((2 * m_netDiameter) * m_nodeTraversalTime)),
       m_pathDiscoveryTime(Time(2 * m_netTraversalTime)),
       m_myRouteTimeout(Time(2 * std::max(m_pathDiscoveryTime, m_activeRouteTimeout))),
@@ -170,10 +170,11 @@ RoutingProtocol::RoutingProtocol()
       m_rerrCount(0),
       m_whNeighborThreshold(1.2f), //隣接ノード比率のしきい値を初期化
       m_sendBlocked(false),
+      m_step3ReplyWaitTime(3*m_nodeTraversalTime),
       m_htimer(Timer::CANCEL_ON_DESTROY),
       m_rreqRateLimitTimer(Timer::CANCEL_ON_DESTROY),
       m_rerrRateLimitTimer(Timer::CANCEL_ON_DESTROY),
-      m_lastBcastTime()      
+      m_lastBcastTime()
 {
     m_nb.SetCallback(MakeCallback(&RoutingProtocol::SendRerrWhenBreaksLinkToNextHop, this));
 }
@@ -419,12 +420,12 @@ RoutingProtocol::RouteOutput(Ptr<Packet> p,
 {
     NS_LOG_FUNCTION(this << header << (oif ? oif->GetIfIndex() : 0));
 
-    //ステップ3用の通信ブロック処理
-    if (m_sendBlocked)
-    {
-        NS_LOG_DEBUG("RouteOutputがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
-        return Ptr<Ipv4Route>();
-    }
+    // //ステップ3用の通信ブロック処理
+    // if (m_sendBlocked)
+    // {
+    //     NS_LOG_DEBUG("RouteOutputがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
+    //     return Ptr<Ipv4Route>();
+    // }
 
     if (!p)
     {
@@ -653,12 +654,12 @@ RoutingProtocol::Forwarding(Ptr<const Packet> p,
 {
     NS_LOG_FUNCTION(this);
 
-    //ステップ3用の通信ブロック処理
-    if (m_sendBlocked)
-    {
-        NS_LOG_DEBUG("Forwardingがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
-        return false;
-    }
+    // //ステップ3用の通信ブロック処理
+    // if (m_sendBlocked)
+    // {
+    //     NS_LOG_DEBUG("Forwardingがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
+    //     return false;
+    // }
     
     Ipv4Address dst = header.GetDestination();
     Ipv4Address origin = header.GetSource();
@@ -2243,10 +2244,12 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
      * ノードがネイバーから Hello メッセージを受信するたびに、ノードはネイバーへのアクティブなルートがあることを確認し、必要に応じてルートを作成する必要があります。
      */
 
+    double rB = rrepHeader.GetNeighborRatio();
+
     //転送後のメッセージを攻撃者が受信した場合
     if(rrepHeader.GetWHForwardFlag() == 3)
     {
-        NS_LOG_DEBUG("転送されたHelloメッセージを受信しました: " << receiver <<"送信元：" << rrepHeader.GetDst() << "隣接ノード比率："<< rrepHeader.GetNeighborRatio());
+        NS_LOG_DEBUG("転送されたHelloメッセージを受信しました: " << receiver <<"送信元：" << rrepHeader.GetDst() << "隣接ノード比率："<< rB);
 
         if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3") ||
             receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.2"))
@@ -2390,12 +2393,12 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
 
     if(rrepHeader.GetWHForwardFlag() == 0)
     {
-    NS_LOG_DEBUG("転送されずにhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rrepHeader.GetNeighborRatio());
+    NS_LOG_DEBUG("転送されずにhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rB);
     }
 
     if(rrepHeader.GetWHForwardFlag() == 3)
     {
-        NS_LOG_DEBUG("転送されたhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rrepHeader.GetNeighborRatio());
+        NS_LOG_DEBUG("転送されたhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rB);
     }
     // =========================================================
     // ここから CREDND ステップ2 用の処理
@@ -2455,10 +2458,10 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
     }
 
     //受信したhelloパケットの隣接ノード比率が閾値を上回る場合、WH攻撃検知を開始
-    if(rrepHeader.GetNeighborRatio() > m_whNeighborThreshold)
+    if(rB > m_whNeighborThreshold)
     {
         NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst()
-                        << "隣接ノード比率" << rrepHeader.GetNeighborRatio());
+                        << "隣接ノード比率" << rB);
         
         //排他的隣接ノードリストと共通隣接ノードリストを作成
         std::set<Ipv4Address> exclusiveNeighbors;   //排他的隣接ノードリスト
@@ -2487,13 +2490,67 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
             }
         }
 
-        // EA のノード数チェック（eA >= 2 でなければ CREDND ステップ2は実行しない）
+        // 排他的隣接ノード数が１以下の場合、例外処理を実行
         if (exclusiveNeighbors.size() < 2)
         {
-            NS_LOG_DEBUG("排他的隣接ノード数が 2 未満のため、ステップ2のホップ数判定は実施しません。"
+            NS_LOG_DEBUG("排他的隣接ノード数が 2 未満のため、しきい値ベースの検知を開始"
                             << " eA = " << exclusiveNeighbors.size());
-            // ※本来はここで「隣接比率のみ」で判断する分岐が入る（論文の特例ケース）
-            return;
+
+            double myNeighborCount = static_cast<double>(neighborList.size());
+            double sumNeighborCount = 0.0;  //Aの隣接ノードの隣接ノード数
+            uint32_t validNeighborNum = 0;  //Aの隣接ノード数
+
+            for (const auto &n : neighborList)
+            {
+                RoutingTableEntry nEntry;
+                if (m_routingTable.LookupRoute(n, nEntry))
+                {
+                    // Hello で受け取って RoutingTableEntry に保存している
+                    // 「隣接ノード数」を利用する
+                    sumNeighborCount += static_cast<double>(nEntry.GetNeighborCount());
+                    validNeighborNum++;
+                }
+            }
+
+            //Aの隣接ノード数 > 0 && Aの隣接ノードの隣接ノード数 > 0の場合、通常通り計算
+            double avgNeighborCount = (validNeighborNum > 0 && sumNeighborCount > 0.0)
+                                      ? (sumNeighborCount / static_cast<double>(validNeighborNum))
+                                      : 0.0;
+            //Aの隣接ノードの平均隣接ノード数 > 0 の場合、隣接ノードしきい値を計算
+            double rA = (avgNeighborCount > 0.0)
+                            ? (myNeighborCount / avgNeighborCount)
+                            : 0.0;
+
+            if(rA <= 0.0)
+            {
+                NS_LOG_DEBUG("判定開始ノードの隣接ノード比率が0以下でした。ステップ3に進みます。");
+                StartStep3Detection(myaddr, helloSender, neighborList, NB, commonNeighbors);
+            }
+
+            // CREDND の特例ケースのしきい値 (論文では 1.5)
+            const double specialRatioThreshold = 1.5;
+
+            NS_LOG_DEBUG("特例ケース判定:"
+                         << " A=" << myaddr
+                         << " B=" << helloSender
+                         << " rA=" << rA
+                         << " rB=" << rB
+                         << " Th=" << specialRatioThreshold);
+
+            if (rA > specialRatioThreshold && rB > specialRatioThreshold)
+            {
+                NS_LOG_INFO("隣接比率のみの特例ケースにより、"
+                            "ノード " << myaddr << " とノード " << helloSender
+                            << " の間にWH攻撃が存在すると判定しました。");
+                //ブラックリストに追加
+                m_blacklist.insert(helloSender);
+                return;
+
+            }else{
+                NS_LOG_DEBUG("特例ケース: rA または rB がしきい値以下のため、ステップ3に進みます。");
+                StartStep3Detection(myaddr, helloSender, neighborList, NB, commonNeighbors);
+                return;
+            }
         }
 
         // ========== 2. sender(B) の neighbor list を保存 ==========
@@ -2518,7 +2575,8 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
                 if (hop == -1 || hop >= wormholeThreshold) {
                     NS_LOG_INFO("判定開始ノード：" << receiver << "　判定対象ノード：" << rrepHeader.GetDst() << "　がWH攻撃の影響下にある可能性があります。");
                     
-                    //WH攻撃の影響下にあるノードとの通信を禁止する
+                    //ブラックリストに登録
+                    m_blacklist.insert(helloSender);
 
                     return; // wormhole confirmed
                 }
@@ -2526,11 +2584,11 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
         }
 
         //ステップ3に移行
-        NS_LOG_DEBUG("ステップ2では以上がありませんでした。ステップ3に移行します。");
+        NS_LOG_DEBUG("ステップ2では異常がありませんでした。ステップ3に移行します。");
         StartStep3Detection(myaddr, helloSender, neighborList, NB, commonNeighbors);
 
     }else{
-        NS_LOG_DEBUG("隣接ノード比率が閾値以下のため判定不要　　隣接ノード比率"<< rrepHeader.GetNeighborRatio() << "　　送信元ノード：" << rrepHeader.GetDst());
+        NS_LOG_DEBUG("隣接ノード比率が閾値以下のため判定不要　　隣接ノード比率"<< rB << "　　送信元ノード：" << rrepHeader.GetDst());
     }
 
     return;
@@ -2637,6 +2695,18 @@ void
 RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, const std::set<Ipv4Address> NA, const std::set<Ipv4Address> NB, const std::set<Ipv4Address> commonNeighbors)
 {
     NS_LOG_FUNCTION(this);
+
+     // 自身が送信停止中なら retry 関数へ
+    if (m_sendBlocked)
+    {
+        NS_LOG_DEBUG("[Step3] 送信停止中のため StartStep3Detection を延期");
+        
+        Simulator::Schedule(Seconds(0.05),
+                            &RoutingProtocol::StartStep3DetectionRetry,
+                            this, startnode, target, NA, NB, commonNeighbors);
+
+        return;
+    }
         
     Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
 
@@ -2651,22 +2721,49 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, 
     for(auto n : NA)
     {
         if (commonNeighbors.count(n) == 0) {
+
+            //ステップ3処理中に送信停止になった場合
+            if(m_sendBlocked)
+            {
+                NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
+                Simulator::Schedule(Seconds(0.05),
+                                    &RoutingProtocol::StartStep3DetectionRetry,
+                                    this, startnode, target, NA, NB, commonNeighbors);
+
+                return;
+            }
+
             //判定対象ノードにメッセージを送信する場合
             if(n == target)
             {
                 NS_LOG_DEBUG("判定開始ノード：" << myaddr << " が判定対象ノード：" << n << "に送信停止依頼を行います。");
+                
                 //2 = 判定対象ノードに周辺ノードへ送信停止を依頼する
                 SendVs(n, myaddr, target, 2);
+                continue;
             }
             NS_LOG_DEBUG("判定開始ノード：" << myaddr << " が判定開始ノードの排他的隣接ノード：" << n << "に送信停止依頼を行います。");
 
             //0 = 監視のみ
             SendVs(n, myaddr, target, 0);  // ← 非共通ノードだけ
+            continue;
         }else{
+            //ステップ3処理中に送信停止になった場合
+            if(m_sendBlocked)
+            {
+                NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
+                Simulator::Schedule(Seconds(0.05),
+                                    &RoutingProtocol::StartStep3DetectionRetry,
+                                    this, startnode, target, NA, NB, commonNeighbors);
+
+                return;
+            }
+            
             NS_LOG_DEBUG("判定開始ノード：" << myaddr << " が共通隣接ノード：" << n << "に送信停止と監視依頼を行います。");
 
             //共通隣接ノードの場合、1 = 送信停止かつ監視依頼を行う
             SendVs(n, myaddr, target, 1);
+            continue;
         }
     }
 
@@ -2677,9 +2774,45 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, 
         NS_LOG_DEBUG("ステップ3の認証メッセージの判定対象ノード：" << target << "への経路が存在しません。");
     }
 
+    //ステップ3処理中に送信停止になった場合
+    if(m_sendBlocked)
+    {
+        NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
+        Simulator::Schedule(Seconds(0.05),
+                            &RoutingProtocol::StartStep3DetectionRetry,
+                            this, startnode, target, NA, NB, commonNeighbors);
+
+        return;
+    }
+
     //認証パケットを送信
     SendAuthPacket(myaddr, target, toTarget);
 
+    return;
+}
+
+void
+RoutingProtocol::StartStep3DetectionRetry(Ipv4Address A, Ipv4Address B,
+                                          std::set<Ipv4Address> NA,
+                                          std::set<Ipv4Address> NB,
+                                          std::set<Ipv4Address> commonNeighbors)
+{
+    // まだ送信停止中なら少し遅らせる
+    if (m_sendBlocked)
+    {
+        NS_LOG_DEBUG("[Step3 Retry] Node " << A
+                      << " は送信停止中。再試行をスケジュール");
+        
+        Simulator::Schedule(Seconds(0.05),
+                            &RoutingProtocol::StartStep3DetectionRetry,
+                            this, A, B, NA, NB, commonNeighbors);
+
+        return;
+    }
+
+    // 送信可能になったら Step3Detection を開始
+    NS_LOG_DEBUG("[Step3 Retry] 送信可能になったため Step3Detection を開始");
+    StartStep3Detection(A, B, NA, NB, commonNeighbors);
 }
 
 bool
@@ -2695,8 +2828,9 @@ RoutingProtocol::PromiscSniff(Ptr<NetDevice> dev,
 
     NS_LOG_DEBUG("PromiscSniffが開始されました");
 
-    // パケットを解析用にコピー
-    Ptr<Packet> p = packet->Copy();
+    Ptr<Packet> p = packet->Copy();        // 検知用
+    Ptr<Packet> pLog = packet->Copy();     // ログ出力専用（解析に影響させない）
+
 
     // ======================================================
     // (1) AODVでなければ終了
@@ -2839,64 +2973,147 @@ RoutingProtocol::PromiscSniff(Ptr<NetDevice> dev,
         }
 
         //　判定開始ノードに判定結果を送信し、送信・監視を停止、エントリを削除
+        //-1 = WH,  0 = 何も受信していない,  1 = 正常
+        int8_t tag = 0;
+
+        if (entry.sawAuth && entry.sawReply && entry.authSenderIsOrigin && entry.replySenderIsTarget)
+        {
+            tag = 1;        // 正常
+        }
+        else if (entry.sawForward || !entry.authSenderIsOrigin || !entry.replySenderIsTarget)
+        {
+            tag = -1;       // 転送疑い＝攻撃
+        }
+        else
+        {
+            tag = 0;        // 何も受信していない
+        }
+
+        //判定結果を送信（後ほど実装）
+
+        // 送信停止を解除 ・エントリを削除
+        entry.pauseTx = false;
+        m_monitorTable[origin].erase(target);
+        if (m_monitorTable[origin].empty())
+        {
+            m_monitorTable.erase(origin);
+        }
+
+        SendBlocked_Stop_Request();
+
     }
 
-    // MAC アドレス表示用
-    Mac48Address macSrc = Mac48Address::ConvertFrom(src);
-    Mac48Address macDst = Mac48Address::ConvertFrom(dst);
-
-    Ipv4Address ipSrc = ip.GetSource();
-    Ipv4Address ipDst = ip.GetDestination();
-    uint8_t proto = ip.GetProtocol();   // TCP / UDP / ICMP / AODV(UDP)
-
-    // --- (2) パケットタイプ文字列化 ---
-    std::string typeStr;
-    switch (type)
+    //ログ表示用
+    Ipv4Header ip2;
+    if (!pLog->RemoveHeader(ip2))
     {
-    case NetDevice::PACKET_HOST:         typeStr = "HOST(自分宛)"; break;
-    case NetDevice::PACKET_OTHERHOST:    typeStr = "OTHERHOST(他宛)"; break;
-    case NetDevice::PACKET_BROADCAST:    typeStr = "BROADCAST"; break;
-    case NetDevice::PACKET_MULTICAST:    typeStr = "MULTICAST"; break;
-    default: typeStr = "UNKNOWN"; break;
+        return true;
     }
+    uint8_t proto = ip2.GetProtocol();
 
-    // --- (4) UDP（AODV）か？ ---
     if (proto == UdpL4Protocol::PROT_NUMBER)
     {
-        UdpHeader udp;
-        p->RemoveHeader(udp);
+        UdpHeader udp2;
+        pLog->RemoveHeader(udp2);
 
-        if (udp.GetDestinationPort() == AODV_PORT)
+        if (udp2.GetDestinationPort() == AODV_PORT)
         {
-            // AODV TypeHeader を読む
-            TypeHeader tHeader;
-            p->PeekHeader(tHeader);
+            TypeHeader t2;
+            pLog->PeekHeader(t2);
 
-            std::string msg = "UNKNOWN";
-            switch(tHeader.Get())
-            {
-            case AODVTYPE_RREQ:      msg = "RREQ"; break;
-            case AODVTYPE_RREP:      msg = "RREP"; break;
-            case AODVTYPE_RERR:      msg = "RERR"; break;
-            case AODVTYPE_RREP_ACK:  msg = "RREP_ACK"; break;
-            case AODVTYPE_VSR:       msg = "VSR(監視要求)"; break;
-            case AODVTYPE_AUTH:      msg = "AUTH"; break;
-            case AODVTYPE_AUTHREP:   msg = "AUTHREP"; break;
-            default:                 msg = "AODV_UNKNOWN"; break;
-            }
-
-            NS_LOG_INFO("[Promisc][" << me << "] AODV受信: "
-                        << msg
-                        << "  srcIP=" << ipSrc
-                        << " → dstIP=" << ipDst
-                        << "  MACsrc=" << macSrc
-                        << " → MACdst=" << macDst
-                        << "  frame=" << typeStr);
+            NS_LOG_INFO("PromiscSniff Log: "
+                        << t2.Get()
+                        << " src=" << ip2.GetSource()
+                        << " dst=" << ip2.GetDestination());
         }
     }
+
+    // // MAC アドレス表示用
+    // Mac48Address macSrc = Mac48Address::ConvertFrom(src);
+    // Mac48Address macDst = Mac48Address::ConvertFrom(dst);
+
+    // Ipv4Address ipSrc = ip.GetSource();
+    // Ipv4Address ipDst = ip.GetDestination();
+    // uint8_t proto = ip.GetProtocol();   // TCP / UDP / ICMP / AODV(UDP)
+
+    // // --- (2) パケットタイプ文字列化 ---
+    // std::string typeStr;
+    // switch (type)
+    // {
+    // case NetDevice::PACKET_HOST:         typeStr = "HOST(自分宛)"; break;
+    // case NetDevice::PACKET_OTHERHOST:    typeStr = "OTHERHOST(他宛)"; break;
+    // case NetDevice::PACKET_BROADCAST:    typeStr = "BROADCAST"; break;
+    // case NetDevice::PACKET_MULTICAST:    typeStr = "MULTICAST"; break;
+    // default: typeStr = "UNKNOWN"; break;
+    // }
+
+    // // --- (4) UDP（AODV）か？ ---
+    // if (proto == UdpL4Protocol::PROT_NUMBER)
+    // {
+    //     UdpHeader udp;
+    //     pLog->RemoveHeader(udp);
+
+    //     if (udp.GetDestinationPort() == AODV_PORT)
+    //     {
+    //         // AODV TypeHeader を読む
+    //         TypeHeader tHeader;
+    //         p->PeekHeader(tHeader);
+
+    //         std::string msg = "UNKNOWN";
+    //         switch(tHeader.Get())
+    //         {
+    //         case AODVTYPE_RREQ:      msg = "RREQ"; break;
+    //         case AODVTYPE_RREP:      msg = "RREP"; break;
+    //         case AODVTYPE_RERR:      msg = "RERR"; break;
+    //         case AODVTYPE_RREP_ACK:  msg = "RREP_ACK"; break;
+    //         case AODVTYPE_VSR:       msg = "VSR(監視要求)"; break;
+    //         case AODVTYPE_AUTH:      msg = "AUTH"; break;
+    //         case AODVTYPE_AUTHREP:   msg = "AUTHREP"; break;
+    //         default:                 msg = "AODV_UNKNOWN"; break;
+    //         }
+
+    //         NS_LOG_INFO("[Promisc][" << me << "] AODV受信: "
+    //                     << msg
+    //                     << "  srcIP=" << ipSrc
+    //                     << " → dstIP=" << ipDst
+    //                     << "  MACsrc=" << macSrc
+    //                     << " → MACdst=" << macDst
+    //                     << "  frame=" << typeStr);
+    //     }
+    // }
     return true;
 }
 
+//送信停止を解除してよいか確認する関数
+void
+RoutingProtocol::SendBlocked_Stop_Request()
+{
+    bool blocked = false;
+
+    for (auto &A_pair : m_monitorTable)
+    {
+        for (auto &B_pair : A_pair.second)
+        {
+            const auto &entry = B_pair.second;
+            if (entry.pauseTx)
+            {
+                blocked = true;
+                break;
+            }
+        }
+        if (blocked) break;
+    }
+
+    m_sendBlocked = blocked;
+    
+    if(blocked)
+    {
+        NS_LOG_DEBUG("送信停止を要求しているエントリが存在します。");
+        
+    }else{
+        NS_LOG_DEBUG("送信停止を要求しているエントリが存在しないため、送信停止を終了します。");
+    }
+}
 
 void
 RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const RoutingTableEntry &toTarget)
@@ -3076,6 +3293,22 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
         NS_LOG_DEBUG("[Step3] Node " << receiver 
                       << " が witness として監視を開始（A=" 
                       << A << ", B=" << B << "）");
+
+        if (!entry.replyWaitEvent.IsPending())
+        {
+            entry.replyWaitEvent = Simulator::Schedule(
+                m_step3ReplyWaitTime,   // 例：0.15 秒
+                &RoutingProtocol::Step3Timeout,  // ← 別関数として実装
+                this,
+                A,
+                B
+            );
+
+            NS_LOG_DEBUG("[Step3] witness " << receiver
+                        << " が Timeout を予約 (A=" << A 
+                        << ", B=" << B << ")");
+        }
+
         return;
     }
 
@@ -3164,7 +3397,7 @@ RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target)
     packet->AddPacketTag(ttl);
 
     // まず TypeHeader
-    TypeHeader tHeader(AODVTYPE_AUTH);
+    TypeHeader tHeader(AODVTYPE_AUTHREP);
     packet->AddHeader(tHeader);
 
     // AuthPacketHeader を追加
@@ -3178,6 +3411,40 @@ RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target)
                 << " nextHop=" << toA.GetNextHop());
 
     socket->SendTo(packet, 0, InetSocketAddress(toA.GetNextHop(), AODV_PORT));
+}
+
+void
+RoutingProtocol::Step3Timeout(Ipv4Address origin, Ipv4Address target)
+{
+    auto itA = m_monitorTable.find(origin);
+    if (itA == m_monitorTable.end()) return;
+
+    auto itB = itA->second.find(target);
+    if (itB == itA->second.end()) return;
+
+    auto &entry = itB->second;
+
+    if(!entry.sawReply)
+    {
+        if(entry.pauseTx)
+        {
+            NS_LOG_DEBUG("タイムアウトにより送信停止を終了します。");
+        }
+        if(entry.monitoring)
+        {
+            NS_LOG_DEBUG("タイムアウトにより監視モードを終了します。");
+        }
+
+        entry.pauseTx = false;
+
+        itA->second.erase(target);
+        if (itA->second.empty())
+        {
+            m_monitorTable.erase(origin);
+        }
+
+        SendBlocked_Stop_Request();
+    }
 }
 
 // //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数

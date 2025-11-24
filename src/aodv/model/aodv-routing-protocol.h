@@ -328,10 +328,18 @@ class RoutingProtocol : public Ipv4RoutingProtocol
 
         Ipv4Address witness;       // witness のIP
         Time startTime;            // Step3 開始時刻
+
+        EventId replyWaitEvent;     // <-- タイムアウト管理用
     };
 
     // A と B の組み合わせごとに Step3 の管理を行う
     std::map<Ipv4Address, std::map<Ipv4Address, Step3Entry>> m_monitorTable;
+
+    //検知後のブラックリスト
+    std::set<Ipv4Address> m_blacklist;
+
+    //監視・送信停止用のタイムアウト時間
+    Time m_step3ReplyWaitTime;
 
   private:
     /// Start protocol operation
@@ -441,6 +449,12 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param commonNeighbors 共通隣接ノード
      */
     void StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, const std::set<ns3::Ipv4Address> NA, const std::set<ns3::Ipv4Address> NB,const std::set<ns3::Ipv4Address> commonNeighbors);
+
+    //StartStep3Detection用のリトライ関数
+    void StartStep3DetectionRetry(Ipv4Address A, Ipv4Address B,
+                                          std::set<Ipv4Address> NA,
+                                          std::set<Ipv4Address> NB,
+                                          std::set<Ipv4Address> commonNeighbors);
     
     bool PromiscSniff(Ptr<NetDevice> dev,
                               Ptr<const Packet> packet,
@@ -448,6 +462,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
                               const Address &src,
                               const Address &dst,
                               NetDevice::PacketType type);
+
+    void SendBlocked_Stop_Request();
 
     //ステップ3　認証パケットを送信
     void SendAuthPacket(Ipv4Address origin,
@@ -471,6 +487,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param target 判定対象ノード
      */
     void SendAuthReply(Ipv4Address origin, Ipv4Address target);
+
+    //監視・送信停止終了用のタイムアウト関数
+    void Step3Timeout(Ipv4Address origin, Ipv4Address target);
 
     /**
      * Create loopback route for given header
