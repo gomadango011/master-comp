@@ -1198,8 +1198,28 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
 void
 RoutingProtocol::SendTo(Ptr<Socket> socket, Ptr<Packet> packet, Ipv4Address destination)
 {
+    //ステップ3の認証パケット、認証応答パケット、送信停止・監視依頼メッセージの場合送信を許可する
+    bool forceSend = false;
+
+    // パケットを軽く解析
+    Ptr<Packet> p = packet->Copy();
+    TypeHeader tHeader;
+    if (p->PeekHeader(tHeader))
+    {
+        uint8_t type = tHeader.Get();
+
+        // Step3 の重要パケットは特例として送信
+        if (type == AODVTYPE_AUTH ||
+            type == AODVTYPE_AUTHREP ||
+            type == AODVTYPE_VSR /* B が送る停止依頼もここに含める */)
+        {
+            forceSend = true;
+            NS_LOG_DEBUG("ステップ3のメッセージの場合、送信を許可する");
+        }
+    }
+
     //ステップ3用の通信ブロック処理
-    if (m_sendBlocked)
+    if (m_sendBlocked && !forceSend)
     {
         NS_LOG_DEBUG("SendToがブロックされました　IPアドレス： " << m_ipv4->GetObject<Node>()->GetId());
         return;
@@ -3145,7 +3165,8 @@ RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const Ro
                 << " → B=" << target
                 << " nextHop=" << toTarget.GetNextHop());
 
-    socket->SendTo(packet, 0, InetSocketAddress(toTarget.GetNextHop(), AODV_PORT));
+    // socket->SendTo(packet, 0, InetSocketAddress(toTarget.GetNextHop(), AODV_PORT));
+    SendTo(socket, packet, toTarget.GetNextHop());
 }
 
 //ステップ3　送信停止と監視を要求するメッセージを送信
@@ -3180,7 +3201,8 @@ RoutingProtocol::SendVs(Ipv4Address dst, Ipv4Address origin, Ipv4Address target,
     packet->AddHeader(tHeader);
     Ptr<Socket> socket = FindSocketWithInterfaceAddress(toDst.GetInterface());
     NS_ASSERT(socket);
-    socket->SendTo(packet, 0, InetSocketAddress(toDst.GetNextHop(), AODV_PORT));
+    // socket->SendTo(packet, 0, InetSocketAddress(toDst.GetNextHop(), AODV_PORT));
+    SendTo(socket, packet, toDst.GetNextHop());
 }
 
 void
@@ -3396,12 +3418,12 @@ RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target)
     ttl.SetTtl(1);
     packet->AddPacketTag(ttl);
 
+    // AuthPacketHeader を追加
+    packet->AddHeader(rep);
+
     // まず TypeHeader
     TypeHeader tHeader(AODVTYPE_AUTHREP);
     packet->AddHeader(tHeader);
-
-    // AuthPacketHeader を追加
-    packet->AddHeader(rep);
 
     Ptr<Socket> socket = FindSocketWithInterfaceAddress(toA.GetInterface());
     NS_ASSERT(socket);
@@ -3410,7 +3432,9 @@ RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target)
                 << " → 判定対象ノード=" << target
                 << " nextHop=" << toA.GetNextHop());
 
-    socket->SendTo(packet, 0, InetSocketAddress(toA.GetNextHop(), AODV_PORT));
+    // socket->SendTo(packet, 0, InetSocketAddress(toA.GetNextHop(), AODV_PORT));
+    // ★重要：RoutingProtocol::SendTo() を使う
+    SendTo(socket, packet, toA.GetNextHop());
 }
 
 void
