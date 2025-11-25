@@ -341,6 +341,20 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     //監視・送信停止用のタイムアウト時間
     Time m_step3ReplyWaitTime;
 
+    //ステップ3　監視結果管理用
+    struct Step3ResultEntry
+    {
+        int s = 0;  // 和を蓄積
+        std::set<Ipv4Address> awaited;  // まだ結果が来ていない witness
+    };
+    
+    // m_step3ResultTable[A][B] = Step3ResultEntry
+    std::map<Ipv4Address,std::map<Ipv4Address, Step3ResultEntry>> m_step3ResultTable;
+
+    // Final 判定のスケジュール用
+    std::map<Ipv4Address,
+            std::map<Ipv4Address, EventId>> m_step3FinalEvent;
+
   private:
     /// Start protocol operation
     void Start();
@@ -558,6 +572,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param src sender address
      */
     void RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+
+    void Step3DoFinalDetection(Ipv4Address A, Ipv4Address B);
 
     //ステップ3監視結果メッセージを受信した場合の処理
     void RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);

@@ -1031,7 +1031,6 @@ Step3ResultHeader::Deserialize(Buffer::Iterator start)
 
     ReadFrom(i, m_origin);
     ReadFrom(i, m_target);
-    ReadFrom(i, m_target);
     ReadFrom(i, m_witness);
     m_tag = static_cast<int8_t>(i.ReadU8());
 

@@ -2739,6 +2739,57 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, 
     NS_LOG_INFO("判定開始ノード(A): " << myaddr
                 << " 判定対象ノード(B): " << target);
 
+    //共通隣接ノード数が0の場合
+    if (commonNeighbors.empty())
+    {
+        NS_LOG_WARN("[Step3] 共通隣接ノードが存在しません (|NA∩NB|=0). s=0 として WH攻撃扱いになります。");
+
+        // ブラックリスト登録（あなたの登録関数に合わせて修正）
+        m_blacklist.insert(target);
+
+        // エントリ削除（安全性のため）
+        m_step3ResultTable[myaddr].erase(target);
+        if (m_step3ResultTable[myaddr].empty())
+        {
+            m_step3ResultTable.erase(myaddr);
+        }
+        return;
+    }
+
+    // ---------------------------------------------------------
+    // ★ 監視結果管理テーブルの初期化
+    // ---------------------------------------------------------
+    Step3ResultEntry entry;
+    entry.s = 0;
+    entry.awaited = std::set<Ipv4Address>();  // 共通隣接ノードが結果を返す対象
+
+    // 既存の Step3 結果が残っていれば削除
+    auto itA = m_step3ResultTable.find(myaddr);
+    if (itA != m_step3ResultTable.end())
+    {
+        auto itB = itA->second.find(target);
+        if (itB != itA->second.end())
+        {
+            NS_LOG_WARN("[Step3] A=" << myaddr << " B=" << target
+                        << " の旧 Step3ResultEntry を削除します");
+
+            itA->second.erase(itB);  // ← 実際に削除
+
+            // A 側が空になったら消す
+            if (itA->second.empty())
+            {
+                m_step3ResultTable.erase(itA);
+            }
+        }
+    }
+
+    // A → B の結果エントリをセット
+    m_step3ResultTable[myaddr][target] = entry;
+
+    NS_LOG_INFO("[Step3] 結果テーブルを初期化: A=" << myaddr
+                    << " B=" << target
+                    << " witness数=" << commonNeighbors.size());
+
     // -----------------------------
     // 1. 周辺ノードの送信停止と共通隣接ノードに関し依頼を行う（VerificationStart）
     // -----------------------------
@@ -2812,6 +2863,20 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, 
 
     //認証パケットを送信
     SendAuthPacket(myaddr, target, toTarget);
+
+    // 共通隣接ノードを文字列化
+    std::ostringstream oss;
+    oss << "{ ";
+    for (auto &addr : commonNeighbors)
+    {
+        oss << addr << " ";
+    }
+    oss << "}";
+
+    NS_LOG_DEBUG("認証パケットを送信しています。 "
+                << "判定開始ノード: " << myaddr
+                << " 判定対象ノード: " << target
+                << " 共通隣接ノード: " << oss.str());
 
     return;
 }
@@ -3359,6 +3424,96 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
     NS_LOG_FUNCTION(this);
 
     NS_LOG_DEBUG("判定開始ノード：" << receiver << "が判定対象ノード："<< sender << "からの認証返信メッセージを受信しました。");
+
+    Ipv4Address A = receiver;   // 判定開始ノード
+    Ipv4Address B = sender;     // 判定対象ノード
+
+    NS_LOG_DEBUG("[Step3] 判定開始ノード " << A
+                  << " が判定対象ノード " << B
+                  << " から AUTHREP を受信");
+
+    if (m_step3ResultTable.count(A) == 0 ||
+        m_step3ResultTable[A].count(B) == 0)
+    {
+        NS_LOG_WARN("[Step3] AUTHREP を受信したが、A=" << A
+                     << " B=" << B << " の Step3ResultEntry が存在しません");
+        return;
+    }
+
+    // -------------------------------
+    // 既存の Final 判定イベントがあればキャンセル
+    // -------------------------------
+    if (m_step3FinalEvent[A][B].IsPending())
+    {
+        m_step3FinalEvent[A][B].Cancel();
+    }
+
+    // -------------------------------
+    // 数秒後に最終判定を行う
+    // -------------------------------
+    Time waitTime = Seconds(0.15);   // ← 調整可能（0.1〜0.5 秒推奨）
+
+    m_step3FinalEvent[A][B] =Simulator::Schedule(waitTime,
+                                                 &RoutingProtocol::Step3DoFinalDetection,
+                                                  this, A, B);
+
+    NS_LOG_DEBUG("[Step3] 最終判定を " << waitTime.GetSeconds()
+                  << " 秒後にスケジュール (A=" << A << ", B=" << B << ")");
+}
+
+void
+RoutingProtocol::Step3DoFinalDetection(Ipv4Address A, Ipv4Address B)
+{
+    NS_LOG_FUNCTION(this);
+
+    // エントリ確認
+    if (m_step3ResultTable.count(A) == 0 ||
+        m_step3ResultTable[A].count(B) == 0)
+    {
+        NS_LOG_WARN("[Step3] 最終判定しようとしたが、A=" << A
+                     << " B=" << B << " のエントリが存在しません");
+        return;
+    }
+
+    Step3ResultEntry &entry = m_step3ResultTable[A][B];
+
+     // -------------------------------
+    // ★ Algorithm 3 の s を算出
+    // -------------------------------
+    int s = entry.s;
+
+    NS_LOG_INFO("[Step3] 最終判定開始 A=" << A
+                 << " B=" << B
+                 << " s=" << s
+                 << " awaited=" << entry.awaited.size());
+    
+    // =========================
+    // 判定ロジック（Algorithm 3）
+    // =========================
+    bool isWormhole = false;
+
+    if (s < 1)
+    {
+        isWormhole = true;
+        NS_LOG_INFO("[Step3] WH 攻撃を検知：A=" << A << " B=" << B);
+    }
+    else
+    {
+        NS_LOG_INFO("[Step3] 正常と判定：A=" << A << " B=" << B);
+    }
+
+    if(isWormhole)
+    {
+        //ブラックリストに追加
+        m_blacklist.insert(B);
+    }
+
+    // エントリ削除
+    m_step3ResultTable[A].erase(B);
+    if (m_step3ResultTable[A].empty())
+    {
+        m_step3ResultTable.erase(A);
+    }
 }
 
 void
@@ -3367,6 +3522,55 @@ RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addres
     NS_LOG_FUNCTION(this);
 
     NS_LOG_DEBUG(receiver << "　が　"<< sender << "　からの監視結果メッセージを受信しました。");
+
+    Step3ResultHeader hdr;
+    p->RemoveHeader(hdr);
+
+    Ipv4Address origin = hdr.GetOrigin();   // A
+    Ipv4Address target = hdr.GetTarget();   // B
+    Ipv4Address witness = hdr.GetWitness(); // oi
+    int8_t tag = hdr.GetTag();           // -1 / 0 / 1
+
+    Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
+
+    if (myaddr != origin)
+    {
+        NS_LOG_WARN("RecvStep3Result: 受信者が判定開始ノード(A)ではないため無視: recv="
+                     << myaddr << " origin=" << origin);
+        return;
+    }
+
+    auto keyA = m_step3ResultTable.find(origin);
+
+    if (keyA == m_step3ResultTable.end())
+    {
+        NS_LOG_ERROR("[Step3] A=" << origin
+                     << " の結果テーブルが存在しません。異常です。");
+        return;
+    }
+
+    auto keyB = keyA->second.find(target);
+    if (keyB == keyA->second.end())
+    {
+        NS_LOG_ERROR("[Step3] A=" << origin
+                     << " B=" << target
+                     << " の Step3 結果エントリが存在しません。");
+        return;
+    }
+
+    auto &entry = keyB->second;
+
+    NS_LOG_DEBUG("[Step3][A=" << origin << "] witness=" << witness
+                  << " から結果を受信 tag=" << int(tag));
+
+    entry.s += tag;
+
+    //------------------------------------------------------------------
+    // (3) この witness は回答済みとして awaited から削除
+    //------------------------------------------------------------------
+    entry.awaited.insert(witness);
+
+    return;
 }
 
 void
