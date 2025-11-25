@@ -491,6 +491,12 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     //監視・送信停止終了用のタイムアウト関数
     void Step3Timeout(Ipv4Address origin, Ipv4Address target);
 
+    //監視ノードが認証応答メッセージを受信した場合に、監視結果を送信するための処理
+    void SendStep3Result(Ipv4Address origin,
+                        Ipv4Address target,
+                        Ipv4Address witness,
+                        int8_t tag);
+
     /**
      * Create loopback route for given header
      *
@@ -552,6 +558,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param src sender address
      */
     void RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+
+    //ステップ3監視結果メッセージを受信した場合の処理
+    void RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
 
     /**
      * Receive RERR

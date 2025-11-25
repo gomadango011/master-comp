@@ -41,7 +41,8 @@ enum MessageType
     AODVTYPE_RREP_ACK = 4, //!< AODVTYPE_RREP_ACK
     AODVTYPE_VSR = 5,
     AODVTYPE_AUTH = 6,    //ステップ３認証パケット用
-    AODVTYPE_AUTHREP = 7
+    AODVTYPE_AUTHREP = 7,
+    AODVTYPE_STEP3RESULT = 8
 };
 
 /**
@@ -927,6 +928,77 @@ private:
 };
 
 std::ostream &operator<<(std::ostream &os, const AuthReplyHeader &h);
+
+
+//-----------------------------------------------------------------------------
+// Step3ResultHeader  (A に tag を返すためのヘッダ)
+//-----------------------------------------------------------------------------
+class Step3ResultHeader : public Header
+{
+public:
+    Step3ResultHeader(Ipv4Address origin = Ipv4Address(),
+                      Ipv4Address target = Ipv4Address(),
+                      Ipv4Address witness = Ipv4Address(),
+                      int8_t tag = 0
+                      );
+
+    static TypeId GetTypeId();
+    virtual TypeId GetInstanceTypeId() const override;
+
+    void SetOrigin(Ipv4Address a) 
+    { 
+        m_origin = a; 
+    }
+
+    void SetTarget(Ipv4Address a) 
+    { 
+        m_target = a;
+    }
+
+    void SetWitness(Ipv4Address a)
+    {
+        m_witness = a;
+    }
+
+    void SetTag(int8_t t)
+    {
+        m_tag = t;
+    }
+
+    Ipv4Address GetOrigin() const 
+    { 
+        return m_origin; 
+    }
+
+    Ipv4Address GetTarget() const 
+    { 
+        return m_target; 
+    }
+
+    Ipv4Address GetWitness() const
+    {
+        return m_witness;
+    }
+
+    int8_t GetTag() const
+    {
+        return m_tag;
+    }
+
+    virtual uint32_t GetSerializedSize() const override;
+    virtual void Serialize(Buffer::Iterator start) const override;
+    virtual uint32_t Deserialize(Buffer::Iterator start) override;
+    virtual void Print(std::ostream &os) const override;
+
+
+private:
+    Ipv4Address m_origin;
+    Ipv4Address m_target;
+    Ipv4Address m_witness;
+    int8_t m_tag;
+};
+
+std::ostream &operator<<(std::ostream &os, const Step3ResultHeader &h);
 
 
 } // namespace aodv

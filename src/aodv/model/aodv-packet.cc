@@ -73,7 +73,8 @@ TypeHeader::Deserialize(Buffer::Iterator start)
     case AODVTYPE_RREP_ACK:
     case AODVTYPE_VSR: 
     case AODVTYPE_AUTH :
-    case AODVTYPE_AUTHREP :{
+    case AODVTYPE_AUTHREP :
+    case AODVTYPE_STEP3RESULT: {
         m_type = (MessageType)type;
         break;
     }
@@ -115,6 +116,10 @@ TypeHeader::Print(std::ostream& os) const
     case AODVTYPE_AUTHREP : {
         os << "認証返送メッセージヘッダ";
     }
+    case AODVTYPE_STEP3RESULT:
+     {
+        os << "共通隣接ノードの監視結果メッセージヘッダ";
+     }
     default:
         os << "UNKNOWN_TYPE";
     }
@@ -888,7 +893,7 @@ AuthPacketHeader::Deserialize(Buffer::Iterator start)
 
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
-    return GetSerializedSize();
+    return dist;
 }
 
 void
@@ -955,7 +960,7 @@ AuthReplyHeader::Deserialize(Buffer::Iterator start)
 
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
-    return GetSerializedSize();
+    return dist;
 }
 
 void
@@ -970,6 +975,87 @@ operator<<(std::ostream &os, const AuthReplyHeader &h)
     h.Print(os);
     return os;
 }
+
+
+//-----------------------------------------------------------------------------
+// Step3ResultHeader
+//-----------------------------------------------------------------------------
+Step3ResultHeader::Step3ResultHeader(Ipv4Address origin,
+                                    Ipv4Address target,
+                                    Ipv4Address witness,
+                                    int8_t tag)
+    : m_origin(origin),
+      m_target(target),
+      m_witness(witness),
+      m_tag(tag)
+{
+}
+
+TypeId
+Step3ResultHeader::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::aodv::Step3ResultHeader")
+            .SetParent<Header>()
+            .SetGroupName("Aodv")
+            .AddConstructor<Step3ResultHeader>();
+    return tid;
+}
+
+TypeId
+Step3ResultHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+uint32_t
+Step3ResultHeader::GetSerializedSize() const
+{
+    // 3つの IPv4 + 1 byte(tag)
+    return 4*3 + 1;
+}
+
+void
+Step3ResultHeader::Serialize(Buffer::Iterator i) const
+{
+    WriteTo(i, m_origin);
+    WriteTo(i, m_target);
+    WriteTo(i, m_witness);
+    i.WriteU8(static_cast<uint8_t>(m_tag));
+}
+
+uint32_t
+Step3ResultHeader::Deserialize(Buffer::Iterator start)
+{
+    Buffer::Iterator i = start;
+
+    ReadFrom(i, m_origin);
+    ReadFrom(i, m_target);
+    ReadFrom(i, m_target);
+    ReadFrom(i, m_witness);
+    m_tag = static_cast<int8_t>(i.ReadU8());
+
+    uint32_t dist = i.GetDistanceFrom(start);
+    NS_ASSERT(dist == GetSerializedSize());
+    return dist;
+}
+
+void
+Step3ResultHeader::Print(std::ostream &os) const
+{
+    os << "Step3Result origin=" << m_origin
+           << " target=" << m_target
+           << " witness=" << m_witness
+           << " tag=" << static_cast<int>(m_tag);
+}
+
+std::ostream &
+operator<<(std::ostream &os, const Step3ResultHeader &h)
+{
+    h.Print(os);
+    return os;
+}
+
 
 } // namespace aodv
 } // namespace ns3
