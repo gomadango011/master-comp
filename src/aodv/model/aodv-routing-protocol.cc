@@ -171,6 +171,8 @@ RoutingProtocol::RoutingProtocol()
       m_whNeighborThreshold(1.2f), //隣接ノード比率のしきい値を初期化
       m_sendBlocked(false),
       m_step3ReplyWaitTime(3*m_nodeTraversalTime),
+      m_isWhNode(false),          // WH ノードフラグを初期化
+      m_whPeerIp(Ipv4Address()), // WH 相方ノード
       m_htimer(Timer::CANCEL_ON_DESTROY),
       m_rreqRateLimitTimer(Timer::CANCEL_ON_DESTROY),
       m_rerrRateLimitTimer(Timer::CANCEL_ON_DESTROY),

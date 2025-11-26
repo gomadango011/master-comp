@@ -355,6 +355,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     std::map<Ipv4Address,
             std::map<Ipv4Address, EventId>> m_step3FinalEvent;
 
+    bool m_isWhNode;              // このノードが WH 攻撃者なら true
+    Ipv4Address m_whPeerIp;       // 相方 WH ノードの P2P 側 IP
+
   private:
     /// Start protocol operation
     void Start();
@@ -678,7 +681,16 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     /// Keep track of the last bcast time
     Time m_lastBcastTime;
 
+    void SetIsWhNode(bool v) 
+    {
+        m_isWhNode = v; 
+    }
 
+    void SetWhPeer(Ipv4Address addr) 
+    { 
+        m_whPeerIp = addr; 
+    }
+    
 };
 
 } // namespace aodv
