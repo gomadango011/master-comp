@@ -192,6 +192,16 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     int64_t AssignStreams(int64_t stream);
 
+    void SetIsWhNode(bool v) 
+    {
+        m_isWhNode = v; 
+    }
+
+    void SetWhPeer(Ipv4Address addr) 
+    { 
+        m_whPeerIp = addr; 
+    }
+
   protected:
     void DoInitialize() override;
 
@@ -358,6 +368,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     bool m_isWhNode;              // このノードが WH 攻撃者なら true
     Ipv4Address m_whPeerIp;       // 相方 WH ノードの P2P 側 IP
 
+    Ptr<Socket> m_whRecvSocket;   // P2P 受信用ソケット
+
   private:
     /// Start protocol operation
     void Start();
@@ -480,12 +492,26 @@ class RoutingProtocol : public Ipv4RoutingProtocol
                               const Address &dst,
                               NetDevice::PacketType type);
 
+    //WH転送判定
+    void ProcessWhForwarding(Ptr<const Packet> originalPkt, uint16_t protocol, Ipv4Address myaddr);
+
+    //WH転送用
+    void TunnelForward(Ptr<const Packet> pkt, Ipv4Address myaddr);
+
+    //パケット識別用
+    std::string IdentifyAodvType(Ptr<const Packet> packet) const;
+    
     void SendBlocked_Stop_Request();
 
     //ステップ3　認証パケットを送信
     void SendAuthPacket(Ipv4Address origin,
                                 Ipv4Address target,
                                 const RoutingTableEntry &toTarget);
+
+    //共通隣接ノードが認証メッセージを監視するための関数
+    void Step3_MonitorProcess(Ptr<Packet> p, uint16_t protocol, Ipv4Address myaddr);
+
+    //ログ表示用
 
     /**
      * ステップ3を開始する関数
@@ -589,6 +615,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     /// Receive  from node with address src
     void RecvError(Ptr<Packet> p, Ipv4Address src);
 
+    //WHリンク用のソケットから受信した場合のコールバック関数
+    void ReceiveFromWhTunnel(Ptr<Socket> socket);
+
     /**
      * @name Send
      * @{
@@ -680,16 +709,6 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     Ptr<UniformRandomVariable> m_uniformRandomVariable;
     /// Keep track of the last bcast time
     Time m_lastBcastTime;
-
-    void SetIsWhNode(bool v) 
-    {
-        m_isWhNode = v; 
-    }
-
-    void SetWhPeer(Ipv4Address addr) 
-    { 
-        m_whPeerIp = addr; 
-    }
     
 };
 

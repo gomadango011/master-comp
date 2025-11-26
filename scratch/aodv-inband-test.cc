@@ -266,6 +266,38 @@ AodvExample::InstallInternetStack()
             Create<OutputStreamWrapper>("aodv.routes", std::ios::out);
         Ipv4RoutingHelper::PrintRoutingTableAllAt(Seconds(8), routingStream);
     }
+
+    // ===============================
+    // ① WH攻撃ノードの設定
+    // ===============================
+    // 攻撃者ノード
+    Ptr<Node> wh1 = malicious.Get(0);
+    Ptr<Node> wh2 = malicious.Get(1);
+
+    // ---- WH1 の AODV を取得 ----
+    Ptr<Ipv4> ipv4_1 = wh1->GetObject<Ipv4>();
+    Ptr<Ipv4RoutingProtocol> rp1 = ipv4_1->GetRoutingProtocol();
+    Ptr<aodv::RoutingProtocol> aodv1 = DynamicCast<aodv::RoutingProtocol>(rp1);
+
+    // ---- WH2 の AODV を取得 ----
+    Ptr<Ipv4> ipv4_2 = wh2->GetObject<Ipv4>();
+    Ptr<Ipv4RoutingProtocol> rp2 = ipv4_2->GetRoutingProtocol();
+    Ptr<aodv::RoutingProtocol> aodv2 = DynamicCast<aodv::RoutingProtocol>(rp2);
+
+    // ---- 攻撃者フラグの設定 ----
+    aodv1->SetIsWhNode(true);
+    aodv2->SetIsWhNode(true);
+
+    // ---- 相手 WH ノードの P2P IP を設定 ----
+    // mal_ifcont に割り当てた P2P のアドレス
+    Ipv4Address wh1P2P = mal_ifcont.GetAddress(0); // 10.1.2.1
+    Ipv4Address wh2P2P = mal_ifcont.GetAddress(1); // 10.1.2.2
+
+    aodv1->SetWhPeer(wh2P2P); // WH1の相方は WH2
+    aodv2->SetWhPeer(wh1P2P); // WH2の相方は WH1
+
+    NS_LOG_UNCOND("WH node 1 IP=" << wh1P2P);
+    NS_LOG_UNCOND("WH node 2 IP=" << wh2P2P);
 }
 
 void
