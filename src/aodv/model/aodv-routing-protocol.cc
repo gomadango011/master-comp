@@ -414,15 +414,85 @@ RoutingProtocol::Start()
     dev->SetPromiscReceiveCallback(MakeCallback(&RoutingProtocol::PromiscSniff, this));
 
     //WHリンクによりメッセージを受信した場合のコールバックを設定
+    // if (m_isWhNode)
+    // {
+    //     m_whRecvSocket = Socket::CreateSocket(GetObject<Node>(), UdpSocketFactory::GetTypeId());
+    //     m_whRecvSocket->Bind(InetSocketAddress(Ipv4Address::GetAny(), AODV_PORT));
+
+    //     NS_LOG_DEBUG("WH転送処理を行うコールバックを設定");
+
+    //     m_whRecvSocket->SetRecvCallback(MakeCallback(&RoutingProtocol::ReceiveFromWhTunnel, this));
+    // }
+
+    // if (m_isWhNode)
+    // {
+    //     NS_LOG_DEBUG("[WH初期化] Start() 内で P2P ソケット初期化を実行");
+    //     InitializeWhSockets(2);  // P2P が interface 1 である前提
+    // }
+}
+
+//WHソケットの初期化
+void
+RoutingProtocol::InitializeWhTunnel()
+{
+    if (!m_isWhNode)
+        return;
+
+    NS_LOG_INFO("[WH] Initializing tunnel socket");
+
+    m_whPort = 50000; // WHトンネルポート
+
+    m_whSocket = Socket::CreateSocket(GetObject<Node>(), UdpSocketFactory::GetTypeId());
+    m_whSocket->Bind(InetSocketAddress(Ipv4Address::GetAny(), m_whPort));
+
+    m_whSocket->SetRecvCallback(
+        MakeCallback(&RoutingProtocol::WhTunnelRecv, this));
+
+    NS_LOG_INFO("[WH] Tunnel socket ready on port " << m_whPort);
+}
+
+void
+RoutingProtocol::SetIsWhNode(bool flag)
+{
+    m_isWhNode = flag;
+
     if (m_isWhNode)
     {
-        m_whRecvSocket = Socket::CreateSocket(GetObject<Node>(), UdpSocketFactory::GetTypeId());
-        m_whRecvSocket->Bind(InetSocketAddress(Ipv4Address::GetAny(), AODV_PORT));
-
-        m_whRecvSocket->SetRecvCallback(MakeCallback(&RoutingProtocol::ReceiveFromWhTunnel, this));
+        Simulator::ScheduleNow(&RoutingProtocol::InitializeWhTunnel, this);
     }
-
 }
+
+
+// void RoutingProtocol::InitializeWhSockets(uint32_t inter)
+// {
+//     if (!m_isWhNode)
+//         return;
+
+//     Ipv4InterfaceAddress iface = m_ipv4->GetAddress(inter, 0);
+
+//     // P2P アドレス帯 (10.1.2.x) 判定
+//     if (iface.GetLocal().CombineMask("255.255.255.0") != Ipv4Address("10.1.2.0"))
+//     {
+//         NS_LOG_WARN("[WH初期化] Node=" << iface.GetLocal()
+//                          << " IF=" << inter
+//                          << " は P2P アドレス帯ではありません。WH ソケットを初期化しません。");
+//         return;
+//     }
+
+//     // ---- P2P受信ソケット ----
+//     m_whRecvSocket = Socket::CreateSocket(GetObject<Node>(), UdpSocketFactory::GetTypeId());
+//     m_whRecvSocket->Bind(InetSocketAddress(iface.GetLocal(), AODV_PORT));
+//     m_whRecvSocket->SetRecvCallback(MakeCallback(&RoutingProtocol::ReceiveFromWhTunnel, this));
+
+//     // ---- 送信用 ----
+//     m_whSendSocket = Socket::CreateSocket(GetObject<Node>(), UdpSocketFactory::GetTypeId());
+//     m_whSendSocket->Bind(InetSocketAddress(iface.GetLocal(), 0));
+
+//     NS_LOG_DEBUG("[WH初期化] Node=" << iface.GetLocal()
+//                   << " IF=" << inter
+//                   << " に WH ソケットを設定しました");
+// }
+
 
 Ptr<Ipv4Route>
 RoutingProtocol::RouteOutput(Ptr<Packet> p,
@@ -533,6 +603,113 @@ RoutingProtocol::RouteInput(Ptr<const Packet> p,
 
     Ipv4Address dst = header.GetDestination();
     Ipv4Address origin = header.GetSource();
+
+    // //WHタグの確認
+    // WhForwardTag tag;
+    // bool isWhForwarded = false;
+    // Ptr<Packet> pwh = p->Copy();
+
+    // if (pwh->PeekPacketTag(tag) && tag.Get())
+    // {
+    //     isWhForwarded = true;
+    //     NS_LOG_DEBUG("[WH] RouteInput: WHタグ付きパケットを受信。ブロードキャスト準備");
+    // }
+
+    // //------------------------------------------------------------------
+    // // WH経由パケット：AODV制御 / Ping をそのまま再ブロードキャスト
+    // //------------------------------------------------------------------
+    // if (m_isWhNode && isWhForwarded)
+    // {
+    //     uint8_t proto = header.GetProtocol();
+
+    //     // ---- AODV制御パケットの場合（UDP + AODV_PORT）----
+    //     if (proto == UdpL4Protocol::PROT_NUMBER)
+    //     {
+    //         Ptr<Packet> tmp = p->Copy();
+    //         UdpHeader udp;
+    //         if (tmp->PeekHeader(udp))
+    //         {
+    //             if (udp.GetDestinationPort() == AODV_PORT)
+    //             {
+    //                 NS_LOG_DEBUG("[WH][RouteInput] AODV制御パケットを再ブロードキャストします");
+
+    //                 // 受信インタフェースに対応する IPv4 アドレスからソケットを取得
+    //                 Ipv4InterfaceAddress iface = m_ipv4->GetAddress(iif, 0);
+    //                 Ptr<Socket> aodvSocket = FindSocketWithInterfaceAddress(iface);
+
+    //                 if (!aodvSocket)
+    //                 {
+    //                     NS_LOG_ERROR("[WH][RouteInput] AODV送信用ソケットが見つかりません (iface="
+    //                                  << iface.GetLocal() << ")");
+    //                 }
+    //                 else
+    //                 {
+    //                     bool oldBlock = m_sendBlocked;
+    //                     m_sendBlocked = false; // WH転送なので強制送信
+
+    //                     // そのまま AODV パケットとしてブロードキャスト
+    //                     SendTo(aodvSocket,
+    //                            p->Copy(),
+    //                            Ipv4Address("255.255.255.255"));
+
+    //                     m_sendBlocked = oldBlock;
+
+    //                     NS_LOG_DEBUG("[WH][RouteInput] AODV制御パケットを 255.255.255.255 へ再送信完了");
+                    
+    //                     return true;
+    //                 }
+    //             }
+    //         }
+    //     }
+
+    //     //==============================================================
+    //     // ② Ping (ICMPv4) の再ブロードキャスト
+    //     //==============================================================
+    //     // if (proto == Icmpv4L4Protocol::PROT_NUMBER)
+    //     // {
+    //     //     NS_LOG_DEBUG("[WH][RouteInput] Ping(ICMPv4) パケットを再ブロードキャストします");
+
+    //     //     Ipv4InterfaceAddress iface = m_ipv4->GetAddress(iif, 0);
+    //     //     Ipv4Address src   = iface.GetLocal();
+    //     //     Ipv4Address bcast = Ipv4Address("255.255.255.255");
+
+    //     //     Ptr<Packet> icmpPkt = p->Copy();
+
+    //     //     // ★ 古い IPv4 ヘッダが残っていても RemoveHeader して安全に無視できる
+    //     //     Ipv4Header oldIp;
+    //     //     icmpPkt->RemoveHeader(oldIp);
+
+    //     //     // ★ 新しい IPv4 ヘッダを構築
+    //     //     Ipv4Header newIp;
+    //     //     newIp.SetSource(src);
+    //     //     newIp.SetDestination(bcast);
+    //     //     newIp.SetProtocol(Icmpv4L4Protocol::PROT_NUMBER);
+    //     //     newIp.SetTtl(64);
+
+    //     //     icmpPkt->AddHeader(newIp);
+
+    //     //     bool oldBlock = m_sendBlocked;
+    //     //     m_sendBlocked = false;
+
+    //     //     Ptr<Ipv4Route> route = nullptr;
+
+    //     //     m_ipv4->Send(icmpPkt,
+    //     //                 newIp.GetSource(),
+    //     //                 newIp.GetDestination(),
+    //     //                 Icmpv4L4Protocol::PROT_NUMBER,
+    //     //                 route);
+
+    //     //     m_sendBlocked = oldBlock;
+
+    //     //     NS_LOG_DEBUG("[WH][RouteInput] Ping を 255.255.255.255 へ再送信完了");
+    //     //     return true;
+    //     // }
+
+    // }
+
+    //------------------------------------------------------------------
+    // 通常パケット処理
+    //------------------------------------------------------------------
 
     // Deferred route request
     if (idev == m_lo)
@@ -757,6 +934,7 @@ RoutingProtocol::SetIpv4(Ptr<Ipv4> ipv4)
 void
 RoutingProtocol::NotifyInterfaceUp(uint32_t i)
 {
+    NS_LOG_UNCOND("[CHECK] NotifyInterfaceUp CALLED! i=" << i);
     NS_LOG_FUNCTION(this << m_ipv4->GetAddress(i, 0).GetLocal());
     Ptr<Ipv4L3Protocol> l3 = m_ipv4->GetObject<Ipv4L3Protocol>();
     if (l3->GetNAddresses(i) > 1)
@@ -820,6 +998,29 @@ RoutingProtocol::NotifyInterfaceUp(uint32_t i)
 
     mac->TraceConnectWithoutContext("DroppedMpdu",
                                     MakeCallback(&RoutingProtocol::NotifyTxError, this));
+
+    // /************** ここから追記（解決策①） **************/
+
+    // // WH ノードであれば、P2P インターフェースなら WH ソケットを初期化する
+    // if (m_isWhNode)
+    // {
+    //     NS_LOG_DEBUG("[NotifyInterfaceUp] interface=" << i 
+    //                     << " addr=" << iface.GetLocal());
+
+    //     // このインターフェースが P2P（10.1.2.x）かどうか判断
+    //     if (iface.GetLocal().CombineMask("255.255.255.0") == Ipv4Address("10.1.2.0"))
+    //     {
+    //         NS_LOG_DEBUG("[NotifyInterfaceUp] P2P IF detected → WH 初期化します");
+    //         InitializeWhSockets(i);
+    //     }
+    //     else
+    //     {
+    //         NS_LOG_DEBUG("[NotifyInterfaceUp] IF=" << i 
+    //                         << " は P2P ではないため WH 初期化しません");
+    //     }
+    // }
+
+    // /************** 追記ここまで **************/
 }
 
 void
@@ -1275,11 +1476,28 @@ void
 RoutingProtocol::RecvAodv(Ptr<Socket> socket)
 {
     NS_LOG_FUNCTION(this << socket);
+    NS_LOG_UNCOND("RecvAodv called on node " << m_ipv4->GetObject<Node>()->GetId());
     Address sourceAddress;
     Ptr<Packet> packet = socket->RecvFrom(sourceAddress);
     InetSocketAddress inetSourceAddr = InetSocketAddress::ConvertFrom(sourceAddress);
     Ipv4Address sender = inetSourceAddr.GetIpv4();
     Ipv4Address receiver;
+
+    bool m_isWhForwardedPacket = false;
+    // ---- WHタグの判定 ----
+    WhForwardTag tag;
+    Ptr<Packet> tagcheck_packet = packet->Copy();
+    if (tagcheck_packet->PeekPacketTag(tag) && tag.Get())
+    {
+        m_isWhForwardedPacket = true;
+        NS_LOG_DEBUG("[RecvAodv] WH経由パケットを受信");
+
+
+    }
+    else
+    {
+        m_isWhForwardedPacket = false;
+    }
 
     if (m_socketAddresses.find(socket) != m_socketAddresses.end())
     {
@@ -1309,35 +1527,43 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
     switch (tHeader.Get())
     {
     case AODVTYPE_RREQ: {
-        RecvRequest(packet, receiver, sender);
+        NS_LOG_DEBUG("AODVTYPE_RREQを受信しました");
+        RecvRequest(packet, receiver, sender, m_isWhForwardedPacket);
         break;
     }
     case AODVTYPE_RREP: {
-        RecvReply(packet, receiver, sender);
+        NS_LOG_DEBUG("AODVTYPE_RREPを受信しました");
+        RecvReply(packet, receiver, sender, m_isWhForwardedPacket);
         break;
     }
     case AODVTYPE_RERR: {
-        RecvError(packet, sender);
+        NS_LOG_DEBUG("AODVTYPE_RERRを受信しました");
+        RecvError(packet, sender, m_isWhForwardedPacket);
         break;
     }
     case AODVTYPE_RREP_ACK: {
-        RecvReplyAck(sender);
+        NS_LOG_DEBUG("AODVTYPE_RREP_ACKを受信しました");
+        RecvReplyAck(sender, m_isWhForwardedPacket);
         break;
     }
     case AODVTYPE_VSR: {
-        RecvVerificationStart(packet, receiver, sender);
+        NS_LOG_DEBUG("AODVTYPE_VSRを受信しました");
+        RecvVerificationStart(packet, receiver, sender, m_isWhForwardedPacket);
         break;
     }
     case AODVTYPE_AUTH: {
-        RecvAuthPacket(packet, receiver, sender);
+        NS_LOG_DEBUG("AODVTYPE_AUTHを受信しました");
+        RecvAuthPacket(packet, receiver, sender, m_isWhForwardedPacket);
         break;
     }
     case AODVTYPE_AUTHREP: {
-        RecvAuthReply(packet, receiver, sender);
+        NS_LOG_DEBUG("AODVTYPE_AUTHREPを受信しました");
+        RecvAuthReply(packet, receiver, sender, m_isWhForwardedPacket);
         break;
     }
     case AODVTYPE_STEP3RESULT: {
-        RecvStep3Result(packet, receiver, sender);
+        NS_LOG_DEBUG("AODVTYPE_STEP3RESULTを受信しました");
+        RecvStep3Result(packet, receiver, sender, m_isWhForwardedPacket);
         break;
     }
     }
@@ -1405,13 +1631,76 @@ RoutingProtocol::UpdateRouteToNeighbor(Ipv4Address sender, Ipv4Address receiver)
     }
 }
 
+//
+bool
+RoutingProtocol::IsPacketFromWh(Ptr<const Packet> p) const
+{
+    WhForwardTag tag;
+    if (p->PeekPacketTag(tag) && tag.Get())
+    {
+        return true;
+    }
+    return false;
+}
+
+
 void
-RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
+RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool fromWh)
 {
     NS_LOG_FUNCTION(this);
     NS_LOG_DEBUG("送信元アドレス：" << src << "からのRREQを　" << receiver << "　が受信");
+
+    if (IsPacketFromWh(p))
+    {
+        NS_LOG_DEBUG("[WH転送検知] 通常ノード " << receiver
+                      << " が WHノードから転送された RREQ を受信しました。送信元=" << src);
+    }
+
     RreqHeader rreqHeader;
     p->RemoveHeader(rreqHeader);
+
+    NS_LOG_DEBUG("RREQ詳細： "
+                  << "送信元=" << src
+                  << " 受信者=" << receiver
+                  << " RREQ送信元=" << rreqHeader.GetOrigin()
+                  << " メッセージID=" << rreqHeader.GetId()
+                  << " ホップ数=" << static_cast<uint32_t>(rreqHeader.GetHopCount())
+                  << " WH転送フラグ=" << static_cast<uint32_t>(rreqHeader.GetWHForwardFlag())
+                  );
+
+     if (rreqHeader.GetWHForwardFlag() == 1)
+    {
+        NS_LOG_UNCOND("[WH-REBCAST-RECV] Node "
+                    << m_ipv4->GetObject<Node>()->GetId()
+                    << " received WH-originated RREQ "
+                    << "from=" << src
+                    << " to=" << receiver
+                    << "RREQ送信元=" << rreqHeader.GetOrigin()
+                    << "メッセージID=" << rreqHeader.GetId()
+                    );
+    }
+
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由RREQを受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(rreqHeader);
+        TypeHeader tHeader(AODVTYPE_RREQ);
+        packet->AddHeader(tHeader);
+
+        // WHタグを付与
+        WhForwardTag tag;
+        tag.Set(true);
+        packet->AddPacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        // BroadcastWhPacket(packet);
+
+        return;
+    }
 
     // A node ignores all RREQs received from any node in its blacklist
     RoutingTableEntry toPrev;
@@ -1440,32 +1729,21 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
         return;
     }
 
-    uint8_t hop = rreqHeader.GetHopCount();
-    if(rreqHeader.GetWHForwardFlag() == 1 || rreqHeader.GetWHForwardFlag() == 2)
-    {
-        NS_LOG_DEBUG("転送フラグが立っているためホップカウントをインクリメントしない");
-    }
-    else
-    {
-        NS_LOG_DEBUG("転送フラグが立っていないためホップカウントをインクリメントする");
-        hop = hop + 1;
-        rreqHeader.SetHopCount(hop);
-    }
+    uint8_t hop = rreqHeader.GetHopCount() + 1;
+    rreqHeader.SetHopCount(hop);
 
-    //転送されたメッセージを攻撃ノードが受信した場合、メッセージを破棄
-    if(rreqHeader.GetWHForwardFlag() == 3)
-    {
-        NS_LOG_DEBUG("転送されたHelloメッセージを受信しました: " << receiver);
+    // //転送されたメッセージを攻撃ノードが受信した場合、メッセージを破棄
+    // if(rreqHeader.GetWHForwardFlag() == 3)
+    // {
+    //     NS_LOG_DEBUG("転送されたHelloメッセージを受信しました: " << receiver);
 
-        if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3") ||
-        receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.2"))
-        {
-            NS_LOG_DEBUG("転送後のメッセージを攻撃者が受信しました。" << receiver);
-            return;
-        }
-    }
-
-    
+    //     if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3") ||
+    //     receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.2"))
+    //     {
+    //         NS_LOG_DEBUG("転送後のメッセージを攻撃者が受信しました。" << receiver);
+    //         return;
+    //     }
+    // }
 
     /*
      *  When the reverse route is created or updated, the following actions on the route are also
@@ -1617,6 +1895,8 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
             rreqHeader.SetUnknownSeqno(false);
         }
     }
+
+    //WH
 
     SocketIpTtlTag tag;
     p->RemovePacketTag(tag);
@@ -1872,13 +2152,27 @@ RoutingProtocol::SendReplyAck(Ipv4Address neighbor)
 }
 
 void
-RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender)
+RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender, bool fromWh)
 {
     NS_LOG_FUNCTION(this << " src " << sender);
+
+    if (IsPacketFromWh(p))
+    {
+        NS_LOG_DEBUG("[WH転送検知] WH 経由の RREP を受信：" << receiver);
+    }
+
     RrepHeader rrepHeader;
     p->RemoveHeader(rrepHeader);
     Ipv4Address dst = rrepHeader.GetDst();
     NS_LOG_LOGIC("RREP destination " << dst << " RREP origin " << rrepHeader.GetOrigin());
+
+    if (rrepHeader.GetWHForwardFlag() == 1)
+    {
+        NS_LOG_UNCOND("[WH-REBCAST-RECV] Node "
+                    << m_ipv4->GetObject<Node>()->GetId()
+                    << " received WH-originated RREP "
+                    << "from=" << sender);
+    }
 
     uint8_t hop = rrepHeader.GetHopCount();
     // Increment RREQ hop count
@@ -2126,7 +2420,7 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
 }
 
 void
-RoutingProtocol::RecvReplyAck(Ipv4Address neighbor)
+RoutingProtocol::RecvReplyAck(Ipv4Address neighbor, bool fromWh)
 {
     NS_LOG_FUNCTION(this);
     RoutingTableEntry rt;
@@ -2995,43 +3289,303 @@ RoutingProtocol::ProcessWhForwarding(Ptr<const Packet> originalPkt, uint16_t pro
 void
 RoutingProtocol::TunnelForward(Ptr<const Packet> pkt, Ipv4Address myaddr)
 {
-    if(!m_isWhNode)
-    {
-        NS_LOG_DEBUG("WHノードではないノードが転送しようとしました。" << myaddr);
+//     if(!m_isWhNode)
+//     {
+//         NS_LOG_DEBUG("WHノードではないノードが転送しようとしました。" << myaddr);
+//         return;
+//     }
+
+//     if(m_whPeerIp == Ipv4Address())
+//     {
+//         NS_LOG_DEBUG("出口側のIPアドレスが設定されていません。" << myaddr);
+//         return;
+//     }
+
+//     RoutingTableEntry toPeer;
+//     if (!m_routingTable.LookupRoute(m_whPeerIp, toPeer))
+//     {
+//         NS_LOG_WARN("[WH] peer route not found: " << m_whPeerIp);
+//         return;
+//     }
+
+//     Ptr<Socket> s = FindSocketWithInterfaceAddress(toPeer.GetInterface());
+
+//     if (!s)
+//     {
+//         NS_LOG_ERROR("[WH] socket not found");
+//         return;
+//     }
+
+//     // ---- 4. トンネル送信用に inner パケットを準備 ----
+//     Ptr<Packet> inner = pkt->Copy();
+
+//     // inner の outer IP/UDP を削除して AODV ペイロードだけ残す
+//     Ipv4Header innerIp;
+//     if (inner->PeekHeader(innerIp))
+//     {
+//         inner->RemoveHeader(innerIp);
+//     }
+
+//     if (innerIp.GetProtocol() == UdpL4Protocol::PROT_NUMBER)
+//     {
+//         UdpHeader innerUdp;
+//         inner->RemoveHeader(innerUdp);
+//     }
+
+//     // --- 4. パケットコピーを作成しタグを付与 ---
+//     WhForwardTag tag;
+//     tag.Set(true);
+//     inner->AddPacketTag(tag);
+
+//     // --- 4. ブロック無効化して送信 ---
+//     bool oldBlock = m_sendBlocked;
+//     m_sendBlocked = false;
+
+//    SendTo(s, inner, toPeer.GetNextHop());
+
+//     m_sendBlocked = oldBlock;
+
+//     NS_LOG_DEBUG("WHノード：" << myaddr << "が出口側のWHノード：" << m_whPeerIp << "に" << IdentifyAodvType(pkt) << "を送信");
+
+    //------------------------------------------------------
+    // WHソケットを定義した場合の処理
+    //------------------------------------------------------
+    if (!m_isWhNode)
         return;
-    }
 
-    if(m_whPeerIp == Ipv4Address())
-    {
-        NS_LOG_DEBUG("出口側のIPアドレスが設定されていません。" << myaddr);
-        return;
-    }
+    Ptr<Packet> inner = pkt->Copy();
 
-    RoutingTableEntry toPeer;
-    if (!m_routingTable.LookupRoute(m_whPeerIp, toPeer))
-    {
-        NS_LOG_WARN("[WH] peer route not found: " << m_whPeerIp);
-        return;
-    }
+    WhForwardTag tag;
+    tag.Set(true);
+    inner->AddPacketTag(tag);
 
-    Ptr<Socket> s = FindSocketWithInterfaceAddress(toPeer.GetInterface());
+    InetSocketAddress remote = InetSocketAddress(m_whPeerIp, m_whPort);
 
-    if (!s)
-    {
-        NS_LOG_ERROR("[WH] socket not found");
-        return;
-    }
+    m_whSocket->SendTo(inner, 0, remote);
 
-    bool oldBlock = m_sendBlocked;
-    m_sendBlocked = false;
-
-   SendTo(s, pkt->Copy(), toPeer.GetNextHop());
-
-    m_sendBlocked = oldBlock;
-
-    NS_LOG_DEBUG("WHノード：" << myaddr << "が出口側のWHノード：" << m_whPeerIp << "に" << IdentifyAodvType(pkt) << "を送信");
+    NS_LOG_DEBUG("[WH] TunnelForward: sent to " << m_whPeerIp);
 
 }
+
+//RecvAODV用
+// void
+// RoutingProtocol::WhTunnelRecv(Ptr<Socket> socket)
+// {
+//     Address from;
+//     Ptr<Packet> outer = socket->RecvFrom(from);
+
+//     NS_LOG_DEBUG("[WH] Tunnel packet received");
+
+//     Ptr<Packet> inner = outer->Copy();
+
+//     // inner は 完全な IPv4 パケット
+//     Ipv4Header ip;
+//     if (!inner->PeekHeader(ip))
+//     {
+//         NS_LOG_ERROR("[WH] No inner IPv4 header");
+//         return;
+//     }
+
+//     WhForwardTag tag;
+//     if (inner->PeekPacketTag(tag) && tag.Get())
+//     {
+//         NS_LOG_UNCOND("[WH-REBCAST-RECV] Node "
+//                     << m_ipv4->GetObject<Node>()->GetId()
+//                     << " received WH inner packet from tunnel");
+//     }
+
+//     if (ip.GetProtocol() == UdpL4Protocol::PROT_NUMBER)
+// {
+//     // inner は AODVパケット
+
+//     // inner のコピーを作る
+//     Ptr<Packet> aodvPkt = inner->Copy();
+
+//     // AODV TypeHeader を読み出す
+//     TypeHeader tHeader;
+//     aodvPkt->RemoveHeader(tHeader);
+
+//     if (tHeader.Get() == AODVTYPE_RREQ)
+//     {
+//         RreqHeader rreq;
+//         aodvPkt->RemoveHeader(rreq);
+
+//         // ★ フラグを設定
+//         rreq.SetWHForwardFlag(1);
+
+//         // ヘッダを戻す
+//         aodvPkt->AddHeader(rreq);
+//         aodvPkt->AddHeader(tHeader);
+
+//         // 再ブロードキャスト
+//         for (auto &entry : m_socketSubnetBroadcastAddresses)
+//         {
+//             Ptr<Socket> bcastSocket = entry.first;
+//             bcastSocket->SendTo(aodvPkt, 0,
+//                 InetSocketAddress(Ipv4Address("255.255.255.255"), 0));
+            
+//                 NS_LOG_DEBUG("再ブロードキャスト完了");
+//         }
+
+//     }
+//     else if (tHeader.Get() == AODVTYPE_RREP)
+//     {
+//         RrepHeader rrep;
+//         aodvPkt->RemoveHeader(rrep);
+
+//         // ★ フラグを設定
+//         rrep.SetWHForwardFlag(1);
+
+//         // ヘッダを戻す
+//         aodvPkt->AddHeader(rrep);
+//         aodvPkt->AddHeader(tHeader);
+
+//         // 再ブロードキャスト
+//         for (auto &entry : m_socketSubnetBroadcastAddresses)
+//         {
+//             Ptr<Socket> bcastSocket = entry.first;
+//             bcastSocket->SendTo(aodvPkt, 0,
+//                 InetSocketAddress(Ipv4Address("255.255.255.255"), 0));
+            
+//                 NS_LOG_DEBUG("再ブロードキャスト完了");
+//         }
+
+                            
+//     }
+// }
+
+//     // // 再ブロードキャスト
+    // for (auto &entry : m_socketSubnetBroadcastAddresses)
+    // {
+    //     Ptr<Socket> bcastSocket = entry.first;
+    //     bcastSocket->SendTo(inner->Copy(), 0,
+    //         InetSocketAddress(Ipv4Address("255.255.255.255"), 0));
+        
+    //         NS_LOG_DEBUG("再ブロードキャスト完了");
+    // }
+
+//     // 自ノードへ正常配達
+//     // uint32_t iface = m_ipv4->GetInterfaceForAddress(ip.GetDestination());
+//     // m_ipv4->Receive(inner, Ipv4L3Protocol::PROT_NUMBER, iface);
+// }
+
+void
+RoutingProtocol::WhTunnelRecv(Ptr<Socket> socket)
+{
+    Address from;
+    Ptr<Packet> outer = socket->RecvFrom(from);
+
+    NS_LOG_DEBUG("[WH] Tunnel packet received");
+
+    // inner = 完全な IPv4 パケット (入口側からそのまま送られてきたやつ)
+    Ptr<Packet> inner = outer->Copy();
+
+    Ipv4Header ip;
+    if (!inner->RemoveHeader(ip))   // ★ Peek ではなく Remove する
+    {
+        NS_LOG_ERROR("[WH] No inner IPv4 header");
+        return;
+    }
+
+    // UDP 以外は今回は無視（必要なら ICMP 等はここで別処理）
+    if (ip.GetProtocol() != UdpL4Protocol::PROT_NUMBER)
+    {
+        NS_LOG_DEBUG("[WH] Inner is not UDP, skip AODV processing");
+        return;
+    }
+
+    UdpHeader udp;
+    inner->RemoveHeader(udp);       // ★ inner = [TypeHeader][RREQ/RREP]
+
+    if (udp.GetDestinationPort() != AODV_PORT)
+    {
+        NS_LOG_DEBUG("[WH] Inner UDP dst port is not AODV_PORT, skip");
+        return;
+    }
+
+    // ---- ここからが本当の AODV ペイロード ----
+    Ptr<Packet> aodvPkt = inner->Copy();
+
+    TypeHeader tHeader;
+    aodvPkt->RemoveHeader(tHeader);
+
+    if (!tHeader.IsValid())
+    {
+        NS_LOG_WARN("[WH] Invalid AODV TypeHeader in inner packet");
+        return;
+    }
+
+    // ブロードキャスト用ソケットを1つ取る
+    Ptr<Socket> bcastSocket = nullptr;
+    for (auto &entry : m_socketSubnetBroadcastAddresses)
+    {
+        bcastSocket = entry.first;
+        break;
+    }
+    if (!bcastSocket)
+    {
+        NS_LOG_ERROR("[WH] No broadcast socket found");
+        return;
+    }
+
+    if (tHeader.Get() == AODVTYPE_RREQ)
+    {
+        RreqHeader rreq;
+        aodvPkt->RemoveHeader(rreq);
+
+        // ★ WHフラグをセット
+        rreq.SetWHForwardFlag(1);
+
+        // ヘッダを戻す（逆順）
+        aodvPkt->AddHeader(rreq);
+        aodvPkt->AddHeader(tHeader);
+
+        bool oldBlock = m_sendBlocked;
+        m_sendBlocked = false;  // 送信ブロックを解除しておく
+
+        // AODVソケットから再ブロードキャスト
+        bcastSocket->SendTo(aodvPkt,
+                            0,
+                            InetSocketAddress(Ipv4Address("255.255.255.255"),
+                                              AODV_PORT));   // ★ ポートは AODV_PORT！
+        
+        m_sendBlocked = oldBlock;
+
+        NS_LOG_DEBUG("[WH] Rebroadcasted RREQ with WHFlag=" << rreq.GetWHForwardFlag()
+                     << "メッセージID：" << rreq.GetId());
+    }
+    else if (tHeader.Get() == AODVTYPE_RREP)
+    {
+        RrepHeader rrep;
+        aodvPkt->RemoveHeader(rrep);
+
+        rrep.SetWHForwardFlag(1);
+
+        // AODV ペイロードだけを整える
+        aodvPkt->AddHeader(rrep);
+        aodvPkt->AddHeader(tHeader);
+
+        bool oldBlock = m_sendBlocked;
+
+        m_sendBlocked = false;  // 送信ブロックを解除しておく
+
+        // ★ UDP/IP は bcastSocket が勝手に付けるので、ここでは付けない
+        bcastSocket->SendTo(aodvPkt,
+                            0,
+                            InetSocketAddress(Ipv4Address("255.255.255.255"),
+                                            AODV_PORT));
+
+        m_sendBlocked = oldBlock;
+
+        NS_LOG_DEBUG("[WH] Rebroadcasted RREP with WHFlag=" << rrep.GetWHForwardFlag());
+    }
+
+    // （必要なら）自ノードにも inner を配達したい場合は、
+    // uint32_t iface = m_ipv4->GetInterfaceForAddress(ip.GetDestination());
+    // m_ipv4->Receive(innerOriginal, Ipv4L3Protocol::PROT_NUMBER, iface);
+}
+
+
 
 std::string
 RoutingProtocol::IdentifyAodvType(Ptr<const Packet> packet) const
@@ -3349,9 +3903,14 @@ RoutingProtocol::SendVs(Ipv4Address dst, Ipv4Address origin, Ipv4Address target,
 }
 
 void
-RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
+RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool fromWh)
 {
     NS_LOG_FUNCTION(this);
+
+    if (IsPacketFromWh(p))
+    {
+        NS_LOG_DEBUG("[WH転送検知] WH 経由の RecvVerificationStartメッセージ を受信：" << receiver);
+    }
 
     VerificationStartHeader vsh;
     p->RemoveHeader(vsh);
@@ -3515,9 +4074,15 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
 void
 RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
                                 Ipv4Address receiver,
-                                Ipv4Address sender)
+                                Ipv4Address sender, 
+                                bool fromWh)
 {
     NS_LOG_FUNCTION(this);
+
+    if (IsPacketFromWh(p))
+    {
+        NS_LOG_DEBUG("[WH転送検知] WH 経由の AUTH を受信：" << receiver);
+    }
 
     AuthPacketHeader auth;
     p->RemoveHeader(auth);
@@ -3543,11 +4108,16 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
 }
 
 void
-RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender)
+RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender, bool fromWh)
 {
     NS_LOG_FUNCTION(this);
 
     NS_LOG_DEBUG("判定開始ノード：" << receiver << "が判定対象ノード："<< sender << "からの認証返信メッセージを受信しました。");
+
+    if (IsPacketFromWh(p))
+    {
+        NS_LOG_DEBUG("[WH転送検知] WH 経由の AUTHREP を受信：" << receiver);
+    }
 
     Ipv4Address A = receiver;   // 判定開始ノード
     Ipv4Address B = sender;     // 判定対象ノード
@@ -3641,11 +4211,17 @@ RoutingProtocol::Step3DoFinalDetection(Ipv4Address A, Ipv4Address B)
 }
 
 void
-RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender)
+RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender, bool fromWh)
 {
     NS_LOG_FUNCTION(this);
 
     NS_LOG_DEBUG(receiver << "　が　"<< sender << "　からの監視結果メッセージを受信しました。");
+
+    if (IsPacketFromWh(p))
+    {
+        NS_LOG_DEBUG("[WH転送検知] WH 経由の Step3Result を受信：" << receiver);
+    }
+
 
     Step3ResultHeader hdr;
     p->RemoveHeader(hdr);
@@ -4029,9 +4605,15 @@ RoutingProtocol::SendStep3Result(Ipv4Address origin,
 // }
 
 void
-RoutingProtocol::RecvError(Ptr<Packet> p, Ipv4Address src)
+RoutingProtocol::RecvError(Ptr<Packet> p, Ipv4Address src, bool fromWh)
 {
     NS_LOG_FUNCTION(this << " from " << src);
+
+    if (IsPacketFromWh(p))
+    {
+        NS_LOG_DEBUG("[WH転送検知] WH 経由の RERR を受信：" << src);
+    }
+
     RerrHeader rerrHeader;
     p->RemoveHeader(rerrHeader);
     std::map<Ipv4Address, uint32_t> dstWithNextHopSrc;
@@ -4086,70 +4668,141 @@ RoutingProtocol::RecvError(Ptr<Packet> p, Ipv4Address src)
     m_routingTable.InvalidateRoutesWithDst(unreachable);
 }
 
-void
-RoutingProtocol::ReceiveFromWhTunnel(Ptr<Socket> socket)
-{
-    Address from;
-    Ptr<Packet> pkt = socket->RecvFrom(from);
+// void
+// RoutingProtocol::ReceiveFromWhTunnel(Ptr<Socket> socket)
+// {
+//     Address from;
+//     Ptr<Packet> pkt = socket->RecvFrom(from);
 
-    Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
+//     WhForwardTag tag;
+//     bool isWhForwarded = false;
 
-    NS_LOG_DEBUG("[WH出口] " << myaddr
-                  << " が WHトンネルからパケット受信");
+//     if (pkt->PeekPacketTag(tag))
+//     {
+//         if (tag.Get())
+//         {
+//             isWhForwarded = true;
+//             NS_LOG_DEBUG("[WH出口] WHタグ付きパケットを受付 → 自ノード経由で再注入する");
+//         }
+//     }
+//     else
+//     {
+//         NS_LOG_DEBUG("[WH出口] WHタグなしパケットを受信（通常の通信？）");
+//     }
 
-    // // ① ここで Step3 の監視処理を実行
-    // Ptr<Packet> pStep3 = pkt->Copy();
-    // Step3_MonitorProcess(pStep3, Ipv4L3Protocol::PROT_NUMBER, myaddr);
+//     if (!pkt || pkt->GetSize() == 0)
+//     {
+//         NS_LOG_DEBUG("[WH出口] 受信パケットが NULL またはサイズ0のため破棄する");
+//         return;
+//     }
 
-    // ② パケットが AODV または PING か判定
-    std::string typeStr = IdentifyAodvType(pkt);
+//     Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
 
-    NS_LOG_DEBUG("[WH出口] パケット種別 = " << typeStr);
+//     NS_LOG_DEBUG("[WH出口] " << myaddr
+//                   << " が WHトンネルからパケット受信");
 
-    // --- AODV パケットの場合 ---
-    if (typeStr.find("NOT") == std::string::npos)
-    {
-        NS_LOG_DEBUG("[WH出口] AODVパケットを再送信します");
+//     // // ① ここで Step3 の監視処理を実行
+//     // Ptr<Packet> pStep3 = pkt->Copy();
+//     // Step3_MonitorProcess(pStep3, Ipv4L3Protocol::PROT_NUMBER, myaddr);
 
-        // AODV の送信処理を利用する
-        // ブロードキャストで再送信
-        Ptr<Socket> aodvSocket = FindSocketWithInterfaceAddress(
-                                      m_ipv4->GetAddress(1,0).GetLocal());
+//     // ② パケットが AODV または PING か判定
+//     std::string typeStr = IdentifyAodvType(pkt);
+
+//     NS_LOG_DEBUG("[WH出口] パケット種別 = " << typeStr);
+
+//     // IdentifyAodvType の戻り値:
+//     //  NOT_IP / NOT_UDP / NOT_AODV なら AODV ではない
+//     //  それ以外 (RREQ/RREP/…/AODV_UNKNOWN) は AODV とみなす
+//     if (typeStr != "NOT_IP" &&
+//         typeStr != "NOT_UDP" &&
+//         typeStr != "NOT_AODV")
+//     {
+//         NS_LOG_DEBUG("[WH出口] AODVパケットを再送信します");
+
+//         // 無線インタフェース(例: index=1)の Ipv4InterfaceAddress を取得
+//         Ipv4InterfaceAddress iface = m_ipv4->GetAddress(1, 0);
+
+//         // そのインタフェースに紐づく AODV ソケットを取得
+//         Ptr<Socket> aodvSocket = FindSocketWithInterfaceAddress(iface);
+//         if (!aodvSocket)
+//         {
+//             NS_LOG_ERROR("[WH出口] AODV送信用ソケットが見つかりません (iface="
+//                          << iface.GetLocal() << ")");
+//             return;
+//         }
         
-        bool oldBlock = m_sendBlocked;
-        m_sendBlocked = false; // 特例で送信許可
+//         bool oldBlock = m_sendBlocked;
+//         m_sendBlocked = false; // 特例で送信許可
 
-        SendTo(aodvSocket, pkt->Copy(), Ipv4Address("255.255.255.255"));
+//         SendTo(aodvSocket, pkt->Copy(), Ipv4Address("255.255.255.255"));
 
-        m_sendBlocked = oldBlock;
+//         m_sendBlocked = oldBlock;
 
-        return;
-    }
+//         return;
+//     }
 
-    // --- PING の場合 (ICMP) ---
-    {
-        Ipv4Header ip;
-        Ptr<Packet> pp = pkt->Copy();
-        if (pp->RemoveHeader(ip))
-        {
-            if (ip.GetProtocol() == Icmpv4L4Protocol::PROT_NUMBER)
-            {
-                NS_LOG_DEBUG("[WH出口] ICMP (Ping) を再送信します");
+//     // ----------------------------------------------------
+//     // ② AODV でなければ、Ping(ICMPv4)かどうか確認
+//     // ----------------------------------------------------
+//     Ipv4Header ip;
+//     Ptr<Packet> pp = pkt->Copy();
 
-                Ptr<Ipv4L3Protocol> ipv4 = m_ipv4;
+//     if (!pp->RemoveHeader(ip))
+//     {
+//         NS_LOG_DEBUG("[WH出口] IPv4ヘッダが読めないためパケットを破棄します");
+//         return;
+//     }
 
-                ipv4->Send(pkt->Copy(),
-                           m_ipv4->GetAddress(1,0).GetLocal(),
-                           ip.GetDestination(),
-                           Icmpv4L4Protocol::PROT_NUMBER);
+//     if (ip.GetProtocol() == Icmpv4L4Protocol::PROT_NUMBER)
+//     {
+//         NS_LOG_DEBUG("[WH出口] ICMP (Ping) を再送信します");
 
-                return;
-            }
-        }
-    }
+//         Ipv4Address dst = ip.GetDestination();
 
-    NS_LOG_DEBUG("[WH出口] 不明なパケットのため破棄する");
-}
+//         // 宛先への経路を AODV のルーティングテーブルから取得
+//         RoutingTableEntry rt;
+//         if (!m_routingTable.LookupRoute(dst, rt))
+//         {
+//             NS_LOG_WARN("[WH出口] Ping 宛先 " << dst
+//                         << " への経路が見つからないため破棄");
+//             return;
+//         }
+
+//         Ptr<Ipv4Route> route = rt.GetRoute();
+//         if (!route)
+//         {
+//             NS_LOG_ERROR("[WH出口] ルート情報が不正です (route==nullptr)");
+//             return;
+//         }
+
+//         // Ipv4L3Protocol を取得
+//         Ptr<Ipv4L3Protocol> ipv4 = m_ipv4->GetObject<Ipv4L3Protocol>();
+//         if (!ipv4)
+//         {
+//             NS_LOG_ERROR("[WH出口] Ipv4L3Protocol が取得できません");
+//             return;
+//         }
+
+//         // 送信元アドレスは route 内の Source を利用
+//         Ipv4Address src = route->GetSource();
+
+//         bool oldBlock = m_sendBlocked;
+//         m_sendBlocked = false; // WH 転送は送信停止フラグに関係なく送信
+
+//         ipv4->Send(pkt->Copy(),
+//                 src,
+//                 dst,
+//                 Icmpv4L4Protocol::PROT_NUMBER,
+//                 route);
+
+//         m_sendBlocked = oldBlock;
+
+//         NS_LOG_DEBUG("[WH出口] AODV でも Ping でもないためパケットを破棄します");
+
+//         return;
+//     }
+//     NS_LOG_DEBUG("[WH出口] 不明なパケットのため破棄する");
+// }
 
 
 void

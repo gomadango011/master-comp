@@ -520,7 +520,7 @@ RrepHeader::SetHello(Ipv4Address origin, uint32_t srcSeqNo, Time lifetime)
     m_dstSeqNo = srcSeqNo;
     m_origin = origin;
     m_lifeTime = lifetime.GetMilliSeconds();
-    m_WHForwardFlag = 0;
+    // m_WHForwardFlag = 0;
     m_NeighborCount = 0;
     m_NeighborRatio = 0.0;
     // m_AnotherRouteCreateFlag = false;

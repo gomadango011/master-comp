@@ -123,7 +123,7 @@ main(int argc, char** argv)
 
 //-----------------------------------------------------------------------------
 AodvExample::AodvExample()
-    : size(16),
+    : size(4),
       step(50),
       totalTime(100),
       pcap(true),
@@ -194,23 +194,23 @@ AodvExample::CreateNodes()
     AnimationInterface::SetConstantPosition (nodes.Get (1), 50, 0);  //WHノード
     AnimationInterface::SetConstantPosition (nodes.Get (2), 150, 0); //WHノード
     AnimationInterface::SetConstantPosition (nodes.Get (3), 200, 0);
-    AnimationInterface::SetConstantPosition (nodes.Get (4), -20, 20);
-    AnimationInterface::SetConstantPosition (nodes.Get (5), -20, -20);
-    AnimationInterface::SetConstantPosition (nodes.Get (6), 220, 20);
-    AnimationInterface::SetConstantPosition (nodes.Get (7), 220, -20);
+    // AnimationInterface::SetConstantPosition (nodes.Get (4), -20, 20);
+    // AnimationInterface::SetConstantPosition (nodes.Get (5), -20, -20);
+    // AnimationInterface::SetConstantPosition (nodes.Get (6), 220, 20);
+    // AnimationInterface::SetConstantPosition (nodes.Get (7), 220, -20);
     
     //確認用
-    AnimationInterface::SetConstantPosition (nodes.Get (8), 50, 100);
-    AnimationInterface::SetConstantPosition (nodes.Get (9), 100, 100);
-    AnimationInterface::SetConstantPosition (nodes.Get (10), 30, 80);
-    AnimationInterface::SetConstantPosition (nodes.Get (11), 30, 120);
-    AnimationInterface::SetConstantPosition (nodes.Get (12), 120, 80);
-    AnimationInterface::SetConstantPosition (nodes.Get (13), 120, 120);
+    // AnimationInterface::SetConstantPosition (nodes.Get (8), 50, 100);
+    // AnimationInterface::SetConstantPosition (nodes.Get (9), 100, 100);
+    // AnimationInterface::SetConstantPosition (nodes.Get (10), 30, 80);
+    // AnimationInterface::SetConstantPosition (nodes.Get (11), 30, 120);
+    // AnimationInterface::SetConstantPosition (nodes.Get (12), 120, 80);
+    // AnimationInterface::SetConstantPosition (nodes.Get (13), 120, 120);
 
     //共通隣接ノード
-    AnimationInterface::SetConstantPosition (nodes.Get (14), 75, 120);
+    // AnimationInterface::SetConstantPosition (nodes.Get (14), 75, 120);
 
-    AnimationInterface::SetConstantPosition (nodes.Get (15), 250, 0);
+    // AnimationInterface::SetConstantPosition (nodes.Get (8), 250, 0);
 
     malicious.Add(nodes.Get(1)); //WH1
     malicious.Add(nodes.Get(2));//WH2
@@ -267,6 +267,14 @@ AodvExample::InstallInternetStack()
         Ipv4RoutingHelper::PrintRoutingTableAllAt(Seconds(8), routingStream);
     }
 
+    // ---- 相手 WH ノードの P2P IP を設定 ----
+    // mal_ifcont に割り当てた P2P のアドレス
+    Ipv4Address wh1P2P = mal_ifcont.GetAddress(0); // 10.1.2.1
+    Ipv4Address wh2P2P = mal_ifcont.GetAddress(1); // 10.1.2.2
+
+    NS_LOG_UNCOND("WH node 1 IP=" << wh1P2P);
+    NS_LOG_UNCOND("WH node 2 IP=" << wh2P2P);
+
     // ===============================
     // ① WH攻撃ノードの設定
     // ===============================
@@ -288,16 +296,19 @@ AodvExample::InstallInternetStack()
     aodv1->SetIsWhNode(true);
     aodv2->SetIsWhNode(true);
 
-    // ---- 相手 WH ノードの P2P IP を設定 ----
-    // mal_ifcont に割り当てた P2P のアドレス
-    Ipv4Address wh1P2P = mal_ifcont.GetAddress(0); // 10.1.2.1
-    Ipv4Address wh2P2P = mal_ifcont.GetAddress(1); // 10.1.2.2
-
     aodv1->SetWhPeer(wh2P2P); // WH1の相方は WH2
     aodv2->SetWhPeer(wh1P2P); // WH2の相方は WH1
 
-    NS_LOG_UNCOND("WH node 1 IP=" << wh1P2P);
-    NS_LOG_UNCOND("WH node 2 IP=" << wh2P2P);
+    // // IFUP コールバックの登録
+    // ipv4_1->TraceConnectWithoutContext(
+    //     "InterfaceUp",
+    //     MakeCallback(&aodv::RoutingProtocol::InitializeWhSockets, aodv1)
+    // );
+    // ipv4_2->TraceConnectWithoutContext(
+    //     "InterfaceUp",
+    //     MakeCallback(&aodv::RoutingProtocol::InitializeWhSockets, aodv2)
+    // );
+
 }
 
 void

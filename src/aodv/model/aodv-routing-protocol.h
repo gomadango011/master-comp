@@ -192,15 +192,17 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     int64_t AssignStreams(int64_t stream);
 
-    void SetIsWhNode(bool v) 
-    {
-        m_isWhNode = v; 
-    }
+    void SetIsWhNode(bool v);
 
     void SetWhPeer(Ipv4Address addr) 
     { 
         m_whPeerIp = addr; 
     }
+
+    //WH攻撃用　P2Pソケットの初期化
+    void InitializeWhTunnel();
+
+    void WhTunnelRecv(Ptr<Socket> socket);  // ← トンネル受信処理
 
   protected:
     void DoInitialize() override;
@@ -368,7 +370,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     bool m_isWhNode;              // このノードが WH 攻撃者なら true
     Ipv4Address m_whPeerIp;       // 相方 WH ノードの P2P 側 IP
 
-    Ptr<Socket> m_whRecvSocket;   // P2P 受信用ソケット
+    Ptr<Socket> m_whSocket;         // WH トンネル用ソケット
+    uint16_t m_whPort;         // WH トンネル用ポート番号
 
   private:
     /// Start protocol operation
@@ -564,19 +567,23 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param receiver receiver address
      * @param src sender address
      */
-    void RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+
+    //受信したパケットがWH攻撃を通ったか判定するための関数
+    bool IsPacketFromWh(Ptr<const Packet> p) const;
+
+    void RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
     /**
      * Receive RREP
      * @param p packet
      * @param my destination address
      * @param src sender address
      */
-    void RecvReply(Ptr<Packet> p, Ipv4Address my, Ipv4Address src);
+    void RecvReply(Ptr<Packet> p, Ipv4Address my, Ipv4Address src, bool m_isWhForwardedPacket);
     /**
      * Receive RREP_ACK
      * @param neighbor neighbor address
      */
-    void RecvReplyAck(Ipv4Address neighbor);
+    void RecvReplyAck(Ipv4Address neighbor, bool m_isWhForwardedPacket);
 
     /**
      * ステップ3　共通隣接ノードに監視を要求するメッセージを受信した場合の処理
@@ -584,7 +591,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param receiver 受信ノード
      * @param src sender address
      */
-    void RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+    void RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
     
     /**
      * ステップ3　認証パケットを受信した場合の処理
@@ -592,7 +599,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param receiver 受信ノード
      * @param src sender address
      */
-    void RecvAuthPacket(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+    void RecvAuthPacket(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
 
     /**
      * ステップ3　認証返送パケットを受信した場合の処理
@@ -600,12 +607,12 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param receiver 受信ノード
      * @param src sender address
      */
-    void RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+    void RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
 
     void Step3DoFinalDetection(Ipv4Address A, Ipv4Address B);
 
     //ステップ3監視結果メッセージを受信した場合の処理
-    void RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+    void RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
 
     /**
      * Receive RERR
@@ -613,7 +620,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param src sender address
      */
     /// Receive  from node with address src
-    void RecvError(Ptr<Packet> p, Ipv4Address src);
+    void RecvError(Ptr<Packet> p, Ipv4Address src, bool m_isWhForwardedPacket);
 
     //WHリンク用のソケットから受信した場合のコールバック関数
     void ReceiveFromWhTunnel(Ptr<Socket> socket);
@@ -709,7 +716,52 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     Ptr<UniformRandomVariable> m_uniformRandomVariable;
     /// Keep track of the last bcast time
     Time m_lastBcastTime;
-    
+
+    //WH攻撃を通った場合のタグ
+    class WhForwardTag : public Tag
+    {
+    public:
+    WhForwardTag() : m_isFromWh(false) {}
+
+    void Set(bool v) { m_isFromWh = v; }
+    bool Get() const { return m_isFromWh; }
+
+    static TypeId GetTypeId(void)
+    {
+        static TypeId tid = TypeId("WhForwardTag")
+        .SetParent<Tag>()
+        .AddConstructor<WhForwardTag>();
+        return tid;
+    }
+
+    virtual TypeId GetInstanceTypeId(void) const
+    {
+        return GetTypeId();
+    }
+
+    virtual void Serialize(TagBuffer i) const
+    {
+        i.WriteU8(m_isFromWh ? 1 : 0);
+    }
+
+    virtual void Deserialize(TagBuffer i)
+    {
+        m_isFromWh = (i.ReadU8() == 1);
+    }
+
+    virtual uint32_t GetSerializedSize(void) const
+    {
+        return 1;
+    }
+
+    virtual void Print(std::ostream &os) const
+    {
+        os << "WhForward=" << (m_isFromWh ? 1 : 0);
+    }
+
+    private:
+    bool m_isFromWh;
+    };    
 };
 
 } // namespace aodv
