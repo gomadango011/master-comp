@@ -1452,20 +1452,9 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
     Ipv4Address sender = inetSourceAddr.GetIpv4();
     Ipv4Address receiver;
 
-    bool m_isWhForwardedPacket = false;
     // ---- WHタグの判定 ----
     WhForwardTag tag;
     Ptr<Packet> tagcheck_packet = packet->Copy();
-    if (tagcheck_packet->PeekPacketTag(tag) && tag.Get())
-    {
-        m_isWhForwardedPacket = true;
-        NS_LOG_DEBUG("[RecvAodv] WH経由パケットを受信" << IdentifyAodvType(packet));
-
-    }
-    else
-    {
-        m_isWhForwardedPacket = false;
-    }
 
     if (m_socketAddresses.find(socket) != m_socketAddresses.end())
     {
@@ -1483,10 +1472,16 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
     NS_LOG_DEBUG("AODV node " << this << " received a AODV packet from " << sender << " to "
                               << receiver);
 
-    if(m_isWhForwardedPacket)
+    bool m_isWhForwardedPacket = false;
+    if (tagcheck_packet->PeekPacketTag(tag) && tag.Get())
     {
-        NS_LOG_DEBUG("[RecvAodv] WH経由パケットを受信2" << IdentifyAodvType(packet));
-        return;
+        m_isWhForwardedPacket = true;
+        NS_LOG_DEBUG("[RecvAodv] WH経由パケットを受信" << IdentifyAodvType(packet));
+
+    }
+    else
+    {
+        m_isWhForwardedPacket = false;
     }
 
     UpdateRouteToNeighbor(sender, receiver);
@@ -1518,7 +1513,7 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
     }
     case AODVTYPE_RREP_ACK: {
         NS_LOG_DEBUG("AODVTYPE_RREP_ACKを受信しました");
-        RecvReplyAck(sender, m_isWhForwardedPacket);
+        RecvReplyAck(packet, sender, m_isWhForwardedPacket);
         break;
     }
     case AODVTYPE_VSR: {
@@ -1618,6 +1613,69 @@ RoutingProtocol::IsPacketFromWh(Ptr<const Packet> p) const
     return false;
 }
 
+void
+RoutingProtocol::BroadcastWhPacket(Ptr<Packet> packet, SocketIpTtlTag tag)
+{
+    NS_LOG_FUNCTION(this << packet);
+
+    // ===============================
+    // 2. WH 再ブロードキャストタグを付与
+    // ===============================
+    WhRebroadcastTag whReTag;
+    whReTag.Set(true);
+    packet->AddPacketTag(whReTag);
+
+    if (tag.GetTtl() < 2)
+    {
+        NS_LOG_DEBUG("WHパケットのTTLが1以下のため、再ブロードキャストしません");
+        return;
+    }
+
+    // ===============================
+    // 3. 各インタフェースに送信
+    // ===============================
+    for (auto it = m_socketAddresses.begin(); it != m_socketAddresses.end(); ++it)
+    {
+        Ptr<Socket> socket = it->first;
+        Ipv4InterfaceAddress iface = it->second;
+
+        // 新規パケットバッファを作成
+        Ptr<Packet> outPkt = packet->Copy();
+
+        SocketIpTtlTag ttl;
+        ttl.SetTtl(tag.GetTtl());
+        outPkt->AddPacketTag(ttl);
+
+        // -------------------------
+        //  4. 宛先ブロードキャストアドレス決定
+        // -------------------------
+        Ipv4Address destination;
+        if (iface.GetMask() == Ipv4Mask::GetOnes())
+        {
+            destination = Ipv4Address("255.255.255.255");
+        }
+        else
+        {
+            destination = iface.GetBroadcast();
+        }
+
+        NS_LOG_DEBUG("[WH] Rebroadcast on iface " << iface.GetLocal()
+                       << " TTL=" << (int)(ttl.GetTtl())
+                       << " → " << destination);
+
+        // 送信時間管理（AODV標準）
+        m_lastBcastTime = Simulator::Now();
+
+        // 遅延送信（0〜10 ms）
+        Simulator::Schedule(
+            MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
+            &RoutingProtocol::SendTo,
+            this,
+            socket,
+            outPkt,
+            destination);
+    }
+}
 
 void
 RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool fromWh)
@@ -1625,35 +1683,20 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
     NS_LOG_FUNCTION(this);
     NS_LOG_DEBUG("送信元アドレス：" << src << "からのRREQを　" << receiver << "　が受信");
 
-    if (IsPacketFromWh(p))
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
     {
-        NS_LOG_DEBUG("[WH転送検知] 通常ノード " << receiver
-                      << " が WHノードから転送された RREQ を受信しました。送信元=" << src);
+        NS_LOG_DEBUG("WHノードからの再ブロードキャストRREQを受信しました。送信者：" << src);
+
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャストRREQを受信しました。処理を終了します。");
+            return;
+        }
     }
 
     RreqHeader rreqHeader;
     p->RemoveHeader(rreqHeader);
-
-    NS_LOG_DEBUG("RREQ詳細： "
-                  << "送信元=" << src
-                  << " 受信者=" << receiver
-                  << " RREQ送信元=" << rreqHeader.GetOrigin()
-                  << " メッセージID=" << rreqHeader.GetId()
-                  << " ホップ数=" << static_cast<uint32_t>(rreqHeader.GetHopCount())
-                  << " WH転送フラグ=" << static_cast<uint32_t>(rreqHeader.GetWHForwardFlag())
-                  );
-
-     if (rreqHeader.GetWHForwardFlag() == 1)
-    {
-        NS_LOG_UNCOND("[WH-REBCAST-RECV] Node "
-                    << m_ipv4->GetObject<Node>()->GetId()
-                    << " received WH-originated RREQ "
-                    << "from=" << src
-                    << " to=" << receiver
-                    << "RREQ送信元=" << rreqHeader.GetOrigin()
-                    << "メッセージID=" << rreqHeader.GetId()
-                    );
-    }
 
     //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
     if(m_isWhNode && fromWh)
@@ -1666,13 +1709,12 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
         TypeHeader tHeader(AODVTYPE_RREQ);
         packet->AddHeader(tHeader);
 
-        // WHタグを付与
-        WhForwardTag tag;
-        tag.Set(true);
-        packet->AddPacketTag(tag);
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
 
         // WHノードからのブロードキャスト送信
-        // BroadcastWhPacket(packet);
+        BroadcastWhPacket(packet, tag);
 
         return;
     }
@@ -1864,7 +1906,7 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
             {
                 m_routingTable.LookupRoute(origin, toOrigin);
                 SendReplyByIntermediateNode(toDst, toOrigin, rreqHeader.GetGratuitousRrep());
-                //return;
+                return;
             }
             rreqHeader.SetDstSeqno(toDst.GetSeqNo());
             rreqHeader.SetUnknownSeqno(false);
@@ -2131,49 +2173,47 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
 {
     NS_LOG_FUNCTION(this << " src " << sender);
 
-    if (IsPacketFromWh(p))
+    // // WH再ブロードキャストタグの確認
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
     {
-        NS_LOG_DEBUG("[WH転送検知] WH 経由の RREP を受信：" << receiver);
+        NS_LOG_DEBUG("WHノードからの再ブロードキャストRREPを受信しました。送信者：" << sender);
+
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャストRREPを受信しました。処理を終了します。");
+            return;
+        }
     }
 
     RrepHeader rrepHeader;
     p->RemoveHeader(rrepHeader);
+
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由RREPを受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(rrepHeader);
+        TypeHeader tHeader(AODVTYPE_RREP);
+        packet->AddHeader(tHeader);
+
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        BroadcastWhPacket(packet, tag);
+
+        return;
+    }
+
     Ipv4Address dst = rrepHeader.GetDst();
     NS_LOG_LOGIC("RREP destination " << dst << " RREP origin " << rrepHeader.GetOrigin());
 
-    if (rrepHeader.GetWHForwardFlag() == 1)
-    {
-        NS_LOG_UNCOND("[WH-REBCAST-RECV] Node "
-                    << m_ipv4->GetObject<Node>()->GetId()
-                    << " received WH-originated RREP "
-                    << "from=" << sender);
-    }
-
     uint8_t hop = rrepHeader.GetHopCount();
-    // Increment RREQ hop count
-    if(rrepHeader.GetWHForwardFlag() == 1 || rrepHeader.GetWHForwardFlag() == 2)
-    {
-        NS_LOG_DEBUG("転送フラグが立っているためホップカウントをインクリメントしない");
-    }
-    else
-    {
-        NS_LOG_DEBUG("転送フラグが立っていないためホップカウントをインクリメントする");
-        hop = hop + 1;
-        rrepHeader.SetHopCount(hop);
-    }
-
-    //転送されたメッセージを攻撃ノードが受信した場合、メッセージを破棄
-    if(rrepHeader.GetWHForwardFlag() == 3)
-    {
-        NS_LOG_DEBUG("転送されたRREPを受信しました: " << receiver);
-        
-        if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3") ||
-        receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.2"))
-        {
-            NS_LOG_DEBUG("転送後のメッセージを攻撃者が受信しました。" << receiver);
-            return;
-        }
-    }
 
     // If RREP is Hello message
     if (dst == rrepHeader.GetOrigin())
@@ -2395,9 +2435,47 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
 }
 
 void
-RoutingProtocol::RecvReplyAck(Ipv4Address neighbor, bool fromWh)
+RoutingProtocol::RecvReplyAck(Ptr<Packet> p, Ipv4Address neighbor, bool fromWh)
 {
     NS_LOG_FUNCTION(this);
+
+    // // WH再ブロードキャストタグの確認
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
+    {
+        NS_LOG_DEBUG("WHノードからの再ブロードキャストReplyAckを受信しました。送信者：" << neighbor);
+
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャストReplyAckを受信しました。処理を終了します。");
+            return;
+        }
+    }
+
+    RrepAckHeader rrepAckHeader;
+    p->RemoveHeader(rrepAckHeader);
+
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由をReplyAck受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(rrepAckHeader);
+        TypeHeader tHeader(AODVTYPE_RREP_ACK);
+        packet->AddHeader(tHeader);
+
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        BroadcastWhPacket(packet, tag);
+
+        return;
+    }
+
     RoutingTableEntry rt;
     if (m_routingTable.LookupRoute(neighbor, rt))
     {
@@ -2552,18 +2630,6 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
 
     double rB = rrepHeader.GetNeighborRatio();
 
-    //転送後のメッセージを攻撃者が受信した場合
-    if(rrepHeader.GetWHForwardFlag() == 3)
-    {
-        NS_LOG_DEBUG("転送されたHelloメッセージを受信しました: " << receiver <<"送信元：" << rrepHeader.GetDst() << "隣接ノード比率："<< rB);
-
-        if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3") ||
-            receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.2"))
-        {
-            NS_LOG_DEBUG("転送後のメッセージを攻撃者が受信しました。" << receiver);
-            return;
-        }
-    }
 
     //helloメッセージを処理
     RoutingTableEntry toNeighbor;
@@ -2697,15 +2763,6 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
     //     return;
     // }
 
-    if(rrepHeader.GetWHForwardFlag() == 0)
-    {
-    NS_LOG_DEBUG("転送されずにhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rB);
-    }
-
-    if(rrepHeader.GetWHForwardFlag() == 3)
-    {
-        NS_LOG_DEBUG("転送されたhelloメッセージを受信しました。受診者：" << receiver <<"　送信者：" << rrepHeader.GetDst() << "隣接ノード閾値：" << rB);
-    }
     // =========================================================
     // ここから CREDND ステップ2 用の処理
     // A: receiver (このノード), B: rrepHeader.GetDst()
@@ -2762,6 +2819,8 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
     {
         m_localGraph[myaddr].insert(helloSender);
     }
+
+    NS_LOG_DEBUG("ステップ2検知開始");
 
     //受信したhelloパケットの隣接ノード比率が閾値を上回る場合、WH攻撃検知を開始
     if(rB > m_whNeighborThreshold)
@@ -3144,6 +3203,15 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, 
 
     //認証パケットを送信
     SendAuthPacket(myaddr, target, toTarget);
+
+    //判定開始ノードが認証応答パケットを受信できなかった場合のタイムアウト処理をスケジューリング
+    Ipv4Address A = myaddr;
+    Ipv4Address B = target;
+
+    NS_LOG_DEBUG("[Step3] AUTHREP タイムアウトイベントを登録 A=" << A << " B=" << B);
+
+    m_step3ResultTable[A][B].timeoutEvent =
+    Simulator::Schedule(m_step3ReplyWaitTime, &RoutingProtocol::Step3TimeoutCheck, this, A, B);
 
     // 共通隣接ノードを文字列化
     std::ostringstream oss;
@@ -3979,13 +4047,41 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
 {
     NS_LOG_FUNCTION(this);
 
-    if (IsPacketFromWh(p))
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
     {
-        NS_LOG_DEBUG("[WH転送検知] WH 経由の RecvVerificationStartメッセージ を受信：" << receiver);
+        NS_LOG_DEBUG("WHノードからの再ブロードキャスト監視・送信停止依頼を受信しました。送信者：" << src);
+
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャスト監視・送信停止依頼を受信しました。処理を終了します。");
+            return;
+        }
     }
 
     VerificationStartHeader vsh;
     p->RemoveHeader(vsh);
+
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由監視・送信停止依頼を受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(vsh);
+        TypeHeader tHeader(AODVTYPE_VSR);
+        packet->AddHeader(tHeader);
+
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        BroadcastWhPacket(packet, tag);
+
+        return;
+    }
 
     Ipv4Address A = vsh.GetOrigin();   // 判定開始ノード
     Ipv4Address B = vsh.GetTarget();   // 判定対象ノード
@@ -4008,7 +4104,7 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
     // -------------------------------
     // (1) 判定対象ノード B の場合
     // -------------------------------
-    if (flag == 2 && receiver == B)
+    if (flag == 2 && IsMyOwnAddress(B))
     {
         // B は AUTHREP を返すだけなので監視は不要
         auto &entry = m_monitorTable[A][B];
@@ -4066,12 +4162,12 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
         return;
     }
 
+    auto &entry = m_monitorTable[A][B];
     // -------------------------------
     // (2) witness（共通隣接ノード）が監視を開始（ModeFlag=1）
     // -------------------------------
     if (flag == 1)
     {
-        auto &entry = m_monitorTable[A][B];
 
         //送信停止
         m_sendBlocked = true;
@@ -4111,7 +4207,7 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
     //----------------------------------------------------
     // ModeFlag=0 : 排他的隣接ノードが送信停止（Step3）
     //----------------------------------------------------
-    if (flag == 0)
+    if (flag == 0 && entry.isWitness == false)
     {
         NS_LOG_DEBUG("[Step3] 排他的隣接ノード " << receiver
                       << " が送信停止要求を受信 (A=" << A << ", B=" << B << ")");
@@ -4119,7 +4215,6 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
         m_sendBlocked = true;
 
         // Step3専用のフラグとして扱う
-        auto &entry = m_monitorTable[A][B];
         entry.pauseTx = true;
 
         if (!entry.replyWaitEvent.IsPending())
@@ -4151,19 +4246,46 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
 {
     NS_LOG_FUNCTION(this);
 
-    if (IsPacketFromWh(p))
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
     {
-        NS_LOG_DEBUG("[WH転送検知] WH 経由の AUTH を受信：" << receiver);
+        NS_LOG_DEBUG("WHノードからの再ブロードキャスト認証パケットを受信しました。送信者：" << sender);
+
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャスト認証パケットを受信しました。処理を終了します。");
+            return;
+        }
     }
 
     AuthPacketHeader auth;
     p->RemoveHeader(auth);
 
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由認証パケットを受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(auth);
+        TypeHeader tHeader(AODVTYPE_AUTH);
+        packet->AddHeader(tHeader);
+
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        BroadcastWhPacket(packet, tag);
+
+        return;
+    }
+
     NS_LOG_DEBUG("判定対象ノード：" << receiver << "が判定開始ノード："<< sender << "からの認証メッセージを受信しました。");
 
     Ipv4Address A = auth.GetOrigin(); //判定開始ノード
     Ipv4Address B = auth.GetTarget(); //判定対象ノード
-    Ipv4Address myadder = m_ipv4->GetAddress(1,0).GetLocal(); //自身のIP
 
      // ----- (1) witness の監視 -----　共通隣接ノードが認証メッセージを受信した場合の処理（Aからメッセージを正常に送信されているか、フォワーディングされていないか）
     // if (m_monitorTable[A][B].monitoring)
@@ -4173,7 +4295,7 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
     // }
 
     // ----- (2) B（判定対象）だけが Reply を返す -----
-    if (myadder == B)
+    if (IsMyOwnAddress(B))
     {
         SendAuthReply(A, B);
     }
@@ -4186,13 +4308,44 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
 
     NS_LOG_DEBUG("判定開始ノード：" << receiver << "が判定対象ノード："<< sender << "からの認証返信メッセージを受信しました。");
 
-    if (IsPacketFromWh(p))
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
     {
-        NS_LOG_DEBUG("[WH転送検知] WH 経由の AUTHREP を受信：" << receiver);
+        NS_LOG_DEBUG("WHノードからの再ブロードキャスト認証返送メッセージを受信しました。送信者：" << sender);
+
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャスト認証返送メッセージを受信しました。処理を終了します。");
+            return;
+        }
     }
 
-    Ipv4Address A = receiver;   // 判定開始ノード
-    Ipv4Address B = sender;     // 判定対象ノード
+    AuthReplyHeader authRep;
+    p->RemoveHeader(authRep);
+
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由認証返送メッセージを受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(authRep);
+        TypeHeader tHeader(AODVTYPE_AUTHREP);
+        packet->AddHeader(tHeader);
+
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        BroadcastWhPacket(packet, tag);
+
+        return;
+    }
+
+    Ipv4Address A = authRep.GetOrigin();   // 判定開始ノード
+    Ipv4Address B = authRep.GetTarget();     // 判定対象ノード
 
     NS_LOG_DEBUG("[Step3] 判定開始ノード " << A
                   << " が判定対象ノード " << B
@@ -4206,80 +4359,75 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
         return;
     }
 
-    // -------------------------------
-    // 既存の Final 判定イベントがあればキャンセル
-    // -------------------------------
-    if (m_step3FinalEvent[A][B].IsPending())
-    {
-        m_step3FinalEvent[A][B].Cancel();
+    Step3ResultEntry &entry = m_step3ResultTable[A][B];
+
+    //認証応答メッセージを受信できなかった場合イベントをキャンセル
+    if (entry.timeoutEvent.IsPending()) {
+        entry.timeoutEvent.Cancel();
+        NS_LOG_DEBUG("[Step3] AUTHREP 正常受信。タイムアウトイベントをキャンセル A=" 
+                      << A << " B=" << B);
     }
 
-    // -------------------------------
-    // 数秒後に最終判定を行う
-    // -------------------------------
-    Time waitTime = Seconds(0.15);   // ← 調整可能（0.1〜0.5 秒推奨）
+    entry.replyReceived = true;
 
-    m_step3FinalEvent[A][B] =Simulator::Schedule(waitTime,
-                                                 &RoutingProtocol::Step3DoFinalDetection,
-                                                  this, A, B);
-
-    NS_LOG_DEBUG("[Step3] 最終判定を " << waitTime.GetSeconds()
-                  << " 秒後にスケジュール (A=" << A << ", B=" << B << ")");
+    //判定開始ノードが判定対象ノードからのAUTHREPを正常に受信した場合の処理
+    if(B == sender)
+    {
+        NS_LOG_DEBUG("[Step3] 判定開始ノード " << A
+                      << " が判定対象ノード " << B
+                      << " から AUTHREP を正常に受信");
+        return;
+    }else{
+        NS_LOG_DEBUG("[Step3] 判定開始ノード " << A
+                      << " が判定対象ノード " << B
+                      << " から AUTHREP を偽装/転送で受信");
+        
+        //ブラックリストに追加
+        m_blacklist.insert(B);
+        return;
+    }
 }
 
 void
-RoutingProtocol::Step3DoFinalDetection(Ipv4Address A, Ipv4Address B)
+RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B)
 {
-    NS_LOG_FUNCTION(this);
+    NS_LOG_DEBUG("[Step3] タイムアウト発生：A=" << A << " B=" << B);
 
-    // エントリ確認
     if (m_step3ResultTable.count(A) == 0 ||
         m_step3ResultTable[A].count(B) == 0)
     {
-        NS_LOG_WARN("[Step3] 最終判定しようとしたが、A=" << A
-                     << " B=" << B << " のエントリが存在しません");
+        NS_LOG_WARN("[Step3] Step3TimeoutCheck: エントリなし A=" << A << " B=" << B);
         return;
     }
 
-    Step3ResultEntry &entry = m_step3ResultTable[A][B];
+    auto &entry = m_step3ResultTable[A][B];
 
-     // -------------------------------
-    // ★ Algorithm 3 の s を算出
-    // -------------------------------
-    int s = entry.s;
-
-    NS_LOG_INFO("[Step3] 最終判定開始 A=" << A
-                 << " B=" << B
-                 << " s=" << s
-                 << " awaited=" << entry.awaited.size());
-    
-    // =========================
-    // 判定ロジック（Algorithm 3）
-    // =========================
-    bool isWormhole = false;
-
-    if (s < 1)
-    {
-        isWormhole = true;
-        NS_LOG_INFO("[Step3] WH 攻撃を検知：A=" << A << " B=" << B);
-    }
-    else
-    {
-        NS_LOG_INFO("[Step3] 正常と判定：A=" << A << " B=" << B);
+    // すでに返信受信済みなら何もしない
+    if (entry.replyReceived) {
+        NS_LOG_DEBUG("[Step3] タイムアウト時に replyReceived=true のため何もしない");
+        return;
     }
 
-    if(isWormhole)
-    {
-        //ブラックリストに追加
+    // ▼▼ ケース3：返信なし → 最終判定 ▼▼
+    // ここで本来、証人ノードの tag 値の合計を計算して s を求める
+    int s = entry.s; // ←あなたが既に作る関数が入る
+
+    NS_LOG_DEBUG("[Step3] A=" << A << " B=" << B << " witnessSum=" << s);
+
+    if (s >= 1) {
+        NS_LOG_INFO("[Step3] 最終判定：内部WHなし (返信なしだが witness >= 1)");
+    } else {
+        NS_LOG_INFO("[Step3] 最終判定：内部ワームホール検知 → B をブラックリストへ");
         m_blacklist.insert(B);
     }
-
+    
     // エントリ削除
     m_step3ResultTable[A].erase(B);
     if (m_step3ResultTable[A].empty())
     {
         m_step3ResultTable.erase(A);
     }
+    return;
 }
 
 void
@@ -4289,14 +4437,41 @@ RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addres
 
     NS_LOG_DEBUG(receiver << "　が　"<< sender << "　からの監視結果メッセージを受信しました。");
 
-    if (IsPacketFromWh(p))
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
     {
-        NS_LOG_DEBUG("[WH転送検知] WH 経由の Step3Result を受信：" << receiver);
-    }
+        NS_LOG_DEBUG("WHノードからの再ブロードキャスト、ステップ3の結果メッセージを受信しました。送信者：" << sender);
 
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャスト、ステップ3の結果メッセージを受信しました。処理を終了します。");
+            return;
+        }
+    }
 
     Step3ResultHeader hdr;
     p->RemoveHeader(hdr);
+
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由ステップ3の結果メッセージを受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(hdr);
+        TypeHeader tHeader(AODVTYPE_STEP3RESULT);
+        packet->AddHeader(tHeader);
+
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        BroadcastWhPacket(packet, tag);
+
+        return;
+    }
 
     Ipv4Address origin = hdr.GetOrigin();   // A
     Ipv4Address target = hdr.GetTarget();   // B
@@ -4305,7 +4480,7 @@ RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addres
 
     Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
 
-    if (myaddr != origin)
+    if (!IsMyOwnAddress(origin))
     {
         NS_LOG_WARN("RecvStep3Result: 受信者が判定開始ノード(A)ではないため無視: recv="
                      << myaddr << " origin=" << origin);
@@ -4681,13 +4856,42 @@ RoutingProtocol::RecvError(Ptr<Packet> p, Ipv4Address src, bool fromWh)
 {
     NS_LOG_FUNCTION(this << " from " << src);
 
-    if (IsPacketFromWh(p))
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
     {
-        NS_LOG_DEBUG("[WH転送検知] WH 経由の RERR を受信：" << src);
+        NS_LOG_DEBUG("WHノードからの再ブロードキャストRRERを受信しました。送信者：" << src);
+
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャストRRERを受信しました。処理を終了します。");
+            return;
+        }
     }
 
     RerrHeader rerrHeader;
     p->RemoveHeader(rerrHeader);
+    
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由RRERを受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(rerrHeader);
+        TypeHeader tHeader(AODVTYPE_RERR);
+        packet->AddHeader(tHeader);
+
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        BroadcastWhPacket(packet, tag);
+
+        return;
+    }
+
     std::map<Ipv4Address, uint32_t> dstWithNextHopSrc;
     std::map<Ipv4Address, uint32_t> unreachable;
     m_routingTable.GetListOfDestinationWithNextHop(src, dstWithNextHopSrc);

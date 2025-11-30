@@ -358,6 +358,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     {
         int s = 0;  // 和を蓄積
         std::set<Ipv4Address> awaited;  // まだ結果が来ていない witness
+        EventId timeoutEvent;           // Case3 タイムアウトイベント
+        bool replyReceived = false;     // AUTHREP を受信したか？
     };
     
     // m_step3ResultTable[A][B] = Step3ResultEntry
@@ -571,6 +573,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     //受信したパケットがWH攻撃を通ったか判定するための関数
     bool IsPacketFromWh(Ptr<const Packet> p) const;
 
+    void BroadcastWhPacket(Ptr<Packet> p, SocketIpTtlTag tag); // ← WH転送用関数
+
     void RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
     /**
      * Receive RREP
@@ -583,7 +587,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * Receive RREP_ACK
      * @param neighbor neighbor address
      */
-    void RecvReplyAck(Ipv4Address neighbor, bool m_isWhForwardedPacket);
+    void RecvReplyAck(Ptr<Packet> p, Ipv4Address neighbor, bool m_isWhForwardedPacket);
 
     /**
      * ステップ3　共通隣接ノードに監視を要求するメッセージを受信した場合の処理
@@ -609,7 +613,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     void RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
 
-    void Step3DoFinalDetection(Ipv4Address A, Ipv4Address B);
+    //ステップ3　AUTHREPタイムアウト処理
+    void Step3TimeoutCheck(Ipv4Address A, Ipv4Address B);
 
     //ステップ3監視結果メッセージを受信した場合の処理
     void RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
@@ -717,7 +722,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     /// Keep track of the last bcast time
     Time m_lastBcastTime;
 
-    //WH攻撃を通った場合のタグ
+    //WH転送判定用タグ
     class WhForwardTag : public Tag
     {
     public:
@@ -761,8 +766,57 @@ class RoutingProtocol : public Ipv4RoutingProtocol
 
     private:
     bool m_isFromWh;
-    };    
+    };
+
+
 };
+
+// WH 再ブロードキャスト判定用タグ
+class WhRebroadcastTag : public Tag
+{
+public:
+  WhRebroadcastTag() : m_isRebroadcast(false) {}
+
+  void Set(bool v) { m_isRebroadcast = v; }
+  bool Get() const { return m_isRebroadcast; }
+
+  static TypeId GetTypeId(void)
+  {
+    static TypeId tid = TypeId("WhRebroadcastTag")
+      .SetParent<Tag>()
+      .AddConstructor<WhRebroadcastTag>();
+    return tid;
+  }
+
+  virtual TypeId GetInstanceTypeId(void) const
+  {
+    return GetTypeId();
+  }
+
+  virtual void Serialize(TagBuffer i) const
+  {
+    i.WriteU8(m_isRebroadcast ? 1 : 0);
+  }
+
+  virtual void Deserialize(TagBuffer i)
+  {
+    m_isRebroadcast = (i.ReadU8() == 1);
+  }
+
+  virtual uint32_t GetSerializedSize(void) const
+  {
+    return 1;
+  }
+
+  virtual void Print(std::ostream &os) const
+  {
+    os << "WhRebroadcast=" << (m_isRebroadcast ? 1 : 0);
+  }
+
+private:
+  bool m_isRebroadcast;
+};
+
 
 } // namespace aodv
 } // namespace ns3
