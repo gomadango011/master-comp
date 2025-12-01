@@ -204,6 +204,12 @@ class RoutingProtocol : public Ipv4RoutingProtocol
 
     void WhTunnelRecv(Ptr<Socket> socket);  // ← トンネル受信処理
 
+    //ルーチングテーブル取得用
+    RoutingTable* GetRoutingTable()
+    {
+        return &m_routingTable;
+    }
+
   protected:
     void DoInitialize() override;
 

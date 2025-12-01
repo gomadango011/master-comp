@@ -1446,6 +1446,7 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
 {
     NS_LOG_FUNCTION(this << socket);
     NS_LOG_UNCOND("RecvAodv called on node " << m_ipv4->GetObject<Node>()->GetId());
+
     Address sourceAddress;
     Ptr<Packet> packet = socket->RecvFrom(sourceAddress);
     InetSocketAddress inetSourceAddr = InetSocketAddress::ConvertFrom(sourceAddress);
@@ -2222,6 +2223,8 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         return;
     }
 
+    
+
     NS_LOG_DEBUG("送信元アドレス：" << sender << "からのRREPを　" << receiver << "　が受信");
 
     /*
@@ -2476,6 +2479,10 @@ RoutingProtocol::RecvReplyAck(Ptr<Packet> p, Ipv4Address neighbor, bool fromWh)
         return;
     }
 
+    
+
+    
+
     RoutingTableEntry rt;
     if (m_routingTable.LookupRoute(neighbor, rt))
     {
@@ -2628,8 +2635,9 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
      * ノードがネイバーから Hello メッセージを受信するたびに、ノードはネイバーへのアクティブなルートがあることを確認し、必要に応じてルートを作成する必要があります。
      */
 
-    double rB = rrepHeader.GetNeighborRatio();
+    NS_LOG_DEBUG("Helloメッセージを " << receiver << " が " << rrepHeader.GetDst() << " から受信");
 
+    double rB = rrepHeader.GetNeighborRatio();
 
     //helloメッセージを処理
     RoutingTableEntry toNeighbor;
@@ -2668,7 +2676,6 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver)
     {
         m_nb.Update(rrepHeader.GetDst(), Time(m_allowedHelloLoss * m_helloInterval));
     }
-
 
     // //内部WH攻撃
     // //WHノードがHelloメッセージを受信した場合、転送フラグを立てて相方に転送
@@ -3274,6 +3281,7 @@ RoutingProtocol::PromiscSniff(Ptr<NetDevice> dev,
     if(m_isWhNode)
     {
         ProcessWhForwarding(pWh, protocol, myaddr);
+        return true;
     }
 
     //----------------------------------------------------------------------
@@ -3288,6 +3296,7 @@ RoutingProtocol::PromiscSniff(Ptr<NetDevice> dev,
 void
 RoutingProtocol::ProcessWhForwarding(Ptr<const Packet> originalPkt, uint16_t protocol, Ipv4Address myaddr)
 {
+    NS_LOG_DEBUG("WH転送処理が開始されました");
     if(!m_isWhNode)
     {
         NS_LOG_DEBUG("WHノードではないノードがパケットを転送しようとしました。" << myaddr);
@@ -3300,6 +3309,17 @@ RoutingProtocol::ProcessWhForwarding(Ptr<const Packet> originalPkt, uint16_t pro
     Ipv4Header ip;
     if (!p->RemoveHeader(ip))
     {
+        NS_LOG_DEBUG("WH転送処理: IPv4ヘッダが見つかりません。" << myaddr);
+        return;
+    }
+
+    // ★ 追加部分: 送信元が相方ノードなら転送しない
+    Ipv4Address src = ip.GetSource();
+    // m_whPartner には「自分の相方ノードの IP アドレス」が入っている想定
+    if (src == m_whPeerIp)
+    {
+        NS_LOG_DEBUG("WH転送処理: 送信元が相方ノード(" << src
+                     << ")のためトンネル転送を行いません。" << " 自ノード: " << myaddr);
         return;
     }
 
@@ -3324,7 +3344,10 @@ RoutingProtocol::ProcessWhForwarding(Ptr<const Packet> originalPkt, uint16_t pro
     if (shouldTunnel)
     {
         TunnelForward(originalPkt, myaddr);
+        return;
     }
+
+    NS_LOG_DEBUG("WH転送処理: 転送不要なパケットです。" << myaddr);
 
     return;
 }
@@ -4083,6 +4106,8 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
         return;
     }
 
+    
+
     Ipv4Address A = vsh.GetOrigin();   // 判定開始ノード
     Ipv4Address B = vsh.GetTarget();   // 判定対象ノード
 
@@ -4282,6 +4307,8 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
         return;
     }
 
+    
+
     NS_LOG_DEBUG("判定対象ノード：" << receiver << "が判定開始ノード："<< sender << "からの認証メッセージを受信しました。");
 
     Ipv4Address A = auth.GetOrigin(); //判定開始ノード
@@ -4343,6 +4370,8 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
 
         return;
     }
+
+    
 
     Ipv4Address A = authRep.GetOrigin();   // 判定開始ノード
     Ipv4Address B = authRep.GetTarget();     // 判定対象ノード
@@ -4472,6 +4501,8 @@ RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addres
 
         return;
     }
+
+    
 
     Ipv4Address origin = hdr.GetOrigin();   // A
     Ipv4Address target = hdr.GetTarget();   // B
@@ -4868,6 +4899,8 @@ RoutingProtocol::RecvError(Ptr<Packet> p, Ipv4Address src, bool fromWh)
         }
     }
 
+    
+
     RerrHeader rerrHeader;
     p->RemoveHeader(rerrHeader);
     
@@ -5181,7 +5214,6 @@ RoutingProtocol::SendHello()
     //隣接ノード数を取得
     uint32_t neigborCount = m_nb.GetNeighborCount();
     NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal() << " の隣接ノード数: " << neigborCount);
-    
     
     //隣接ノード数の平均隣接ノード数と、自身の隣接ノードをリストアップ
     uint32_t totalNeighborCount = 0;  //全隣接ノードの隣接ノード数の合計

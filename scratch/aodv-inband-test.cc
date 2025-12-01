@@ -107,6 +107,19 @@ class AodvExample
     void InstallApplications();
 };
 
+// 1ノード分のルーティングテーブルをファイルに書く
+void PrintAllRoutingTables(Ptr<Node> node, Ptr<OutputStreamWrapper> stream)
+{
+    Ptr<Ipv4> ipv4 = node->GetObject<Ipv4>();
+    Ptr<Ipv4RoutingProtocol> rp = ipv4->GetRoutingProtocol();
+    Ptr<aodv::RoutingProtocol> aodv = rp->GetObject<aodv::RoutingProtocol>();
+
+    if (aodv)
+    {
+        aodv->PrintRoutingTable(stream);
+    }
+}
+
 int
 main(int argc, char** argv)
 {
@@ -161,6 +174,22 @@ AodvExample::Run()
     InstallApplications();
 
     std::cout << "Starting simulation for " << totalTime << " s ...\n";
+
+    double dumpTime = 3.0;   // 出力タイミング（秒）
+
+    Simulator::Schedule(Seconds(dumpTime), [this, dumpTime]() {
+
+        Ptr<OutputStreamWrapper> stream =
+            Create<OutputStreamWrapper>("aodv.routes", std::ios::out);
+
+        for (uint32_t i = 0; i < nodes.GetN(); i++)
+        {
+            PrintAllRoutingTables(nodes.Get(i), stream);
+        }
+
+        std::cout << "*** AODV routing tables were written to aodv.routes at "
+                  << dumpTime << " sec ***" << std::endl;
+    });
 
     Simulator::Stop(Seconds(totalTime));
     Simulator::Run();
@@ -298,17 +327,6 @@ AodvExample::InstallInternetStack()
 
     aodv1->SetWhPeer(wh2P2P); // WH1の相方は WH2
     aodv2->SetWhPeer(wh1P2P); // WH2の相方は WH1
-
-    // // IFUP コールバックの登録
-    // ipv4_1->TraceConnectWithoutContext(
-    //     "InterfaceUp",
-    //     MakeCallback(&aodv::RoutingProtocol::InitializeWhSockets, aodv1)
-    // );
-    // ipv4_2->TraceConnectWithoutContext(
-    //     "InterfaceUp",
-    //     MakeCallback(&aodv::RoutingProtocol::InitializeWhSockets, aodv2)
-    // );
-
 }
 
 void
