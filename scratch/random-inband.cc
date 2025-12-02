@@ -21,6 +21,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <random>   // ★ これを追加
 
 using namespace ns3;
 
