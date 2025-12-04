@@ -149,6 +149,7 @@ RreqHeader::RreqHeader(uint8_t flags,
                        uint32_t dstSeqNo,
                        Ipv4Address origin,
                        uint32_t originSeqNo,
+                       Ipv4Address sender,
                        uint8_t WHForwardFlag
                        )
     : m_flags(flags),
@@ -159,6 +160,7 @@ RreqHeader::RreqHeader(uint8_t flags,
       m_dstSeqNo(dstSeqNo),
       m_origin(origin),
       m_originSeqNo(originSeqNo),
+      m_sender(sender),
       m_WHForwardFlag(WHForwardFlag)
 {
 }
@@ -185,6 +187,7 @@ uint32_t
 RreqHeader::GetSerializedSize() const
 {
     return 23
+            + 4 // 送信ノードのIPアドレス
             + 1; // +1 for WHForwardFlag
             //+ 1 //　別経路構築用のフラグ
             // + 4; // 別経路要求メッセージのID
@@ -202,6 +205,7 @@ RreqHeader::Serialize(Buffer::Iterator i) const
     WriteTo(i, m_origin);
     i.WriteHtonU32(m_originSeqNo);
 
+    WriteTo(i, m_sender); // 送信ノードのIPアドレスをシリアル化する
     i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
     //i.WriteU8(m_AnotherRouteCreateFlag); // 別経路作成用のフラグ
 }
@@ -219,6 +223,7 @@ RreqHeader::Deserialize(Buffer::Iterator start)
     ReadFrom(i, m_origin);
     m_originSeqNo = i.ReadNtohU32();
 
+    ReadFrom(i, m_sender); // 送信ノードのIPアドレスをデシリアル化する
     m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
     //m_AnotherRouteCreateFlag = i.ReadU8();
 
@@ -331,6 +336,7 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
                        Ipv4Address dst,
                        uint32_t dstSeqNo,
                        Ipv4Address origin,
+                       Ipv4Address sender,
                        Time lifeTime,
                        uint8_t WHForwardFlag,
                        uint32_t NeighborCount,
@@ -342,6 +348,7 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
       m_dst(dst),
       m_dstSeqNo(dstSeqNo),
       m_origin(origin),
+      m_sender(sender),
       m_WHForwardFlag(WHForwardFlag),
       m_NeighborCount(NeighborCount),
       m_NeighborRatio(NeighborRatio),
@@ -380,6 +387,7 @@ RrepHeader::GetSerializedSize() const
     + 4 /*NeighborCount*/
     // + 1 /*AnotherRouteCreateFlag*/
     + 4 /*NeighborRatio*/
+    + 4 //センダーのIPアドレス
     + neighborListSize; //隣接ノードリストのサイズを加
     // + 4 /*経路要求メッセージのID*/
     
@@ -394,6 +402,7 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     WriteTo(i, m_dst);
     i.WriteHtonU32(m_dstSeqNo);
     WriteTo(i, m_origin);
+    WriteTo(i, m_sender); // センダーのIPアドレスをシリアル化する
     i.WriteHtonU32(m_lifeTime);
     i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
     i.WriteHtonU32(m_NeighborCount); // NeighborCountを4バイトとしてシリアル化する
@@ -420,6 +429,7 @@ RrepHeader::Deserialize(Buffer::Iterator start)
     ReadFrom(i, m_dst);
     m_dstSeqNo = i.ReadNtohU32();
     ReadFrom(i, m_origin);
+    ReadFrom(i, m_sender); // センダーのIPアドレスをデシリアル化する
     m_lifeTime = i.ReadNtohU32();
     m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
     m_NeighborCount = i.ReadNtohU32(); // NeighborCountを4バイトとしてデシリアル化する

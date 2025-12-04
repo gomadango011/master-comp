@@ -1327,6 +1327,8 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
     m_requestId++;
     rreqHeader.SetId(m_requestId);
 
+    rreqHeader.SetSender(m_ipv4->GetAddress(1, 0).GetLocal());
+
     // if(Anothorflag)
     // {
     //     Ipv4Address myIP = m_ipv4->GetAddress(1, 0).GetLocal();
@@ -1722,7 +1724,7 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
 
     // A node ignores all RREQs received from any node in its blacklist
     RoutingTableEntry toPrev;
-    if (m_routingTable.LookupRoute(src, toPrev))
+    if (m_routingTable.LookupRoute(rreqHeader.GetSender(), toPrev))
     {
         if (toPrev.IsUnidirectional())
         {
@@ -1733,6 +1735,32 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
 
     uint32_t id = rreqHeader.GetId();
     Ipv4Address origin = rreqHeader.GetOrigin();
+
+    if(!m_isWhNode)
+    {
+        if(rreqHeader.GetSender() == Ipv4Address("10.1.2.1"))
+        {
+            rreqHeader.SetSender(Ipv4Address("10.0.0.2"));
+        }
+
+        if(rreqHeader.GetSender() == Ipv4Address("10.1.2.2"))
+        {
+            rreqHeader.SetSender(Ipv4Address("10.0.0.3"));
+        }
+    }
+
+    if(m_isWhNode)
+    {
+        if(rreqHeader.GetSender() == Ipv4Address("10.0.0.2"))
+        {
+            rreqHeader.SetSender(Ipv4Address("10.1.2.1"));
+        }
+
+        if(rreqHeader.GetSender() == Ipv4Address("10.0.0.3"))
+        {
+            rreqHeader.SetSender(Ipv4Address("10.1.2.2"));
+        }
+    }
 
     /*
      *  Node checks to determine whether it has received a RREQ with the same Originator IP Address
@@ -1786,7 +1814,7 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
             /*seqNo=*/rreqHeader.GetOriginSeqno(),
             /*iface=*/m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0),
             /*hops=*/hop,
-            /*nextHop=*/src,
+            /*nextHop=*/rreqHeader.GetSender(),
             /*lifetime=*/Time(2 * m_netTraversalTime - 2 * hop * m_nodeTraversalTime));
         m_routingTable.AddRoute(newEntry);
     }
@@ -1804,7 +1832,7 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
             toOrigin.SetSeqNo(rreqHeader.GetOriginSeqno());
         }
         toOrigin.SetValidSeqNo(true);
-        toOrigin.SetNextHop(src);
+        toOrigin.SetNextHop(rreqHeader.GetSender());
         toOrigin.SetOutputDevice(m_ipv4->GetNetDevice(m_ipv4->GetInterfaceForAddress(receiver)));
         toOrigin.SetInterface(m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0));
         toOrigin.SetHop(hop);
@@ -1815,17 +1843,17 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
     }
 
     RoutingTableEntry toNeighbor;
-    if (!m_routingTable.LookupRoute(src, toNeighbor))
+    if (!m_routingTable.LookupRoute(rreqHeader.GetSender(), toNeighbor))
     {
-        NS_LOG_DEBUG("Neighbor:" << src << " not found in routing table. Creating an entry");
+        NS_LOG_DEBUG("Neighbor:" << rreqHeader.GetSender() << " not found in routing table. Creating an entry");
         Ptr<NetDevice> dev = m_ipv4->GetNetDevice(m_ipv4->GetInterfaceForAddress(receiver));
         RoutingTableEntry newEntry(dev,
-                                   src,
+                                   rreqHeader.GetSender(),
                                    false,
                                    rreqHeader.GetOriginSeqno(),
                                    m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0),
                                    1,
-                                   src,
+                                   rreqHeader.GetSender(),
                                    m_activeRouteTimeout);
         m_routingTable.AddRoute(newEntry);
     }
@@ -1838,10 +1866,10 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
         toNeighbor.SetOutputDevice(m_ipv4->GetNetDevice(m_ipv4->GetInterfaceForAddress(receiver)));
         toNeighbor.SetInterface(m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0));
         toNeighbor.SetHop(1);
-        toNeighbor.SetNextHop(src);
+        toNeighbor.SetNextHop(rreqHeader.GetSender());
         m_routingTable.Update(toNeighbor);
     }
-    m_nb.Update(src, Time(m_allowedHelloLoss * m_helloInterval));
+    m_nb.Update(rreqHeader.GetSender(), Time(m_allowedHelloLoss * m_helloInterval));
 
     NS_LOG_LOGIC(receiver << " receive RREQ with hop count "
                           << static_cast<uint32_t>(rreqHeader.GetHopCount()) << " ID "
@@ -1884,9 +1912,9 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
         /*
          * Drop RREQ, This node RREP will make a loop.
          */
-        if (toDst.GetNextHop() == src)
+        if (toDst.GetNextHop() == rreqHeader.GetSender())
         {
-            NS_LOG_DEBUG("Drop RREQ from " << src << ", dest next hop " << toDst.GetNextHop());
+            NS_LOG_DEBUG("Drop RREQ from " << rreqHeader.GetSender() << ", dest next hop " << toDst.GetNextHop());
             return;
         }
         /*
@@ -1914,13 +1942,14 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
         }
     }
 
-    //WH
+    //センダーを設定
+    rreqHeader.SetSender(receiver);
 
     SocketIpTtlTag tag;
     p->RemovePacketTag(tag);
     if (tag.GetTtl() < 2)
     {
-        NS_LOG_DEBUG("TTL exceeded. Drop RREQ origin " << src << " destination " << dst);
+        NS_LOG_DEBUG("TTL exceeded. Drop RREQ origin " << rreqHeader.GetSender() << " destination " << dst);
         return;
     }
 
@@ -2066,6 +2095,7 @@ RoutingProtocol::SendReply(const RreqHeader& rreqHeader, const RoutingTableEntry
                           /*dst=*/rreqHeader.GetDst(),
                           /*dstSeqNo=*/m_seqNo,
                           /*origin=*/toOrigin.GetDestination(),
+                          /*sender=*/rreqHeader.GetSender(),
                           /*lifetime=*/m_myRouteTimeout);
 
     // //別経路作成用のフラグが立っている場合、RREPにもフラグを立てる
@@ -2098,6 +2128,7 @@ RoutingProtocol::SendReplyByIntermediateNode(RoutingTableEntry& toDst,
                           /*dst=*/toDst.GetDestination(),
                           /*dstSeqNo=*/toDst.GetSeqNo(),
                           /*origin=*/toOrigin.GetDestination(),
+                          /*sender=*/m_ipv4->GetAddress(1, 0).GetLocal(),
                           /*lifetime=*/toDst.GetLifeTime());
     /* If the node we received a RREQ for is a neighbor we are
      * probably facing a unidirectional link... Better request a RREP-ack
@@ -2135,6 +2166,7 @@ RoutingProtocol::SendReplyByIntermediateNode(RoutingTableEntry& toDst,
                                  /*dst=*/toOrigin.GetDestination(),
                                  /*dstSeqNo=*/toOrigin.GetSeqNo(),
                                  /*origin=*/toDst.GetDestination(),
+                                 /*sender=*/m_ipv4->GetAddress(1, 0).GetLocal(),
                                  /*lifetime=*/toOrigin.GetLifeTime());
         Ptr<Packet> packetToDst = Create<Packet>();
         SocketIpTtlTag gratTag;
@@ -2223,7 +2255,31 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         return;
     }
 
-    
+    if(!m_isWhNode)
+    {
+        if(rrepHeader.GetSender() == Ipv4Address("10.1.2.1"))
+        {
+            rrepHeader.SetSender(Ipv4Address("10.0.0.2"));
+        }
+
+        if(rrepHeader.GetSender() == Ipv4Address("10.1.2.2"))
+        {
+            rrepHeader.SetSender(Ipv4Address("10.0.0.3"));
+        }
+    }
+
+    if(m_isWhNode)
+    {
+        if(rrepHeader.GetSender() == Ipv4Address("10.0.0.2"))
+        {
+            rrepHeader.SetSender(Ipv4Address("10.1.2.1"));
+        }
+
+        if(rrepHeader.GetSender() == Ipv4Address("10.0.0.3"))
+        {
+            rrepHeader.SetSender(Ipv4Address("10.1.2.2"));
+        }
+    }
 
     NS_LOG_DEBUG("送信元アドレス：" << sender << "からのRREPを　" << receiver << "　が受信");
 
@@ -2248,7 +2304,7 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         /*seqNo=*/rrepHeader.GetDstSeqno(),
         /*iface=*/m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0),
         /*hops=*/hop,
-        /*nextHop=*/sender,
+        /*nextHop=*/rrepHeader.GetSender(),
         /*lifetime=*/rrepHeader.GetLifeTime());
     RoutingTableEntry toDst;
 
@@ -2284,7 +2340,7 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
     // RREP-ACKメッセージを返信してRREPの受信を確認する
     if (rrepHeader.GetAckRequired())
     {
-        SendReplyAck(sender);
+        SendReplyAck(rrepHeader.GetSender());
         rrepHeader.SetAckRequired(false);
     }
 
@@ -2340,6 +2396,9 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         toNextHopToOrigin.InsertPrecursor(toDst.GetNextHop());
         m_routingTable.Update(toNextHopToOrigin);
     }
+
+    // センダーを設定
+    rrepHeader.SetSender(receiver);
 
     SocketIpTtlTag tag;
     p->RemovePacketTag(tag);
@@ -5262,6 +5321,7 @@ RoutingProtocol::SendHello()
                                /*dst=*/iface.GetLocal(),
                                /*dstSeqNo=*/m_seqNo,
                                /*origin=*/iface.GetLocal(),
+                               /*sender=*/iface.GetLocal(),
                                /*lifetime=*/Time(m_allowedHelloLoss * m_helloInterval),
                                /*whForwardFlag=*/0,//通常のHelloメッセージとして設定
                                 /*neighborCount=*/neigborCount,

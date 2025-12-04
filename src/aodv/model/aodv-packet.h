@@ -156,6 +156,7 @@ class RreqHeader : public Header
                uint32_t dstSeqNo = 0,
                Ipv4Address origin = Ipv4Address(),
                uint32_t originSeqNo = 0,
+               Ipv4Address sender = Ipv4Address(),
                uint8_t WHForwardFlag = 0
                );
 
@@ -279,6 +280,24 @@ class RreqHeader : public Header
         return m_originSeqNo;
     }
 
+    /**
+     * @brief Set the sender address
+     * @param a the sender address
+     */
+    void SetSender(Ipv4Address a)
+    {
+        m_sender = a;
+    }
+
+    /**
+     * @brief Get the sender address
+     * @return the sender address
+     */
+    Ipv4Address GetSender() const
+    {
+        return m_sender;
+    }
+
     //内部WH WHノード間転送フラグ 設定・取得
     void SetWHForwardFlag(uint8_t f)
     {
@@ -370,6 +389,7 @@ class RreqHeader : public Header
     uint32_t m_dstSeqNo;    ///< Destination Sequence Number
     Ipv4Address m_origin;   ///< Originator IP Address
     uint32_t m_originSeqNo; ///< Source Sequence Number
+    Ipv4Address m_sender;   ///< RREQ送信ノードのIPアドレス
     uint8_t m_WHForwardFlag;///< 内部WH攻撃用転送フラグ
     //bool m_AnotherRouteCreateFlag; ///< 別経路構築用のフラグ
     // std::vector<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
@@ -427,6 +447,7 @@ class RrepHeader : public Header
                Ipv4Address dst = Ipv4Address(),
                uint32_t dstSeqNo = 0,
                Ipv4Address origin = Ipv4Address(),
+               Ipv4Address sender = Ipv4Address(),
                Time lifetime = MilliSeconds(0),
                uint8_t WHForwardFlag = 0,
                uint32_t NeighborCount = 0,
@@ -515,6 +536,16 @@ class RrepHeader : public Header
     Ipv4Address GetOrigin() const
     {
         return m_origin;
+    }
+
+    void SetSender(Ipv4Address a)
+    {
+        m_sender = a;
+    }
+
+    Ipv4Address GetSender() const
+    {
+        return m_sender;
     }
 
     /**
@@ -616,6 +647,7 @@ class RrepHeader : public Header
     Ipv4Address m_dst;    ///< Destination IP Address
     uint32_t m_dstSeqNo;  ///< Destination Sequence Number
     Ipv4Address m_origin; ///< Source IP Address
+    Ipv4Address m_sender; ///< RREP送信ノードのIPアドレス
     uint32_t m_lifeTime;  ///< Lifetime (in milliseconds)
     uint8_t m_WHForwardFlag; ///< 内部WH攻撃用転送フラグ
     uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
