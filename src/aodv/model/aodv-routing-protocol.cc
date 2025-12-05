@@ -1327,7 +1327,7 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
     m_requestId++;
     rreqHeader.SetId(m_requestId);
 
-    rreqHeader.SetSender(m_ipv4->GetAddress(1, 0).GetLocal());
+    
 
     // if(Anothorflag)
     // {
@@ -1348,6 +1348,7 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
         Ipv4InterfaceAddress iface = j->second;
 
         rreqHeader.SetOrigin(iface.GetLocal());
+        rreqHeader.SetSender(iface.GetLocal());
         m_rreqIdCache.IsDuplicate(iface.GetLocal(), m_requestId);
 
         Ptr<Packet> packet = Create<Packet>();
@@ -1942,9 +1943,6 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
         }
     }
 
-    //センダーを設定
-    rreqHeader.SetSender(receiver);
-
     SocketIpTtlTag tag;
     p->RemovePacketTag(tag);
     if (tag.GetTtl() < 2)
@@ -2050,6 +2048,10 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
     {
         Ptr<Socket> socket = j->first;
         Ipv4InterfaceAddress iface = j->second;
+
+        //senderを設定
+        rreqHeader.SetSender(iface.GetLocal());
+
         Ptr<Packet> packet = Create<Packet>();
         SocketIpTtlTag ttl;
         ttl.SetTtl(tag.GetTtl() - 1);
@@ -2095,7 +2097,7 @@ RoutingProtocol::SendReply(const RreqHeader& rreqHeader, const RoutingTableEntry
                           /*dst=*/rreqHeader.GetDst(),
                           /*dstSeqNo=*/m_seqNo,
                           /*origin=*/toOrigin.GetDestination(),
-                          /*sender=*/rreqHeader.GetSender(),
+                          /*sender=*/m_ipv4->GetAddress(1, 0).GetLocal(),
                           /*lifetime=*/m_myRouteTimeout);
 
     // //別経路作成用のフラグが立っている場合、RREPにもフラグを立てる
