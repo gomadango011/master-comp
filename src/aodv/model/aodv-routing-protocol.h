@@ -210,6 +210,23 @@ class RoutingProtocol : public Ipv4RoutingProtocol
         return &m_routingTable;
     }
 
+    //WH攻撃のモードの状態を管理
+    enum WhMode {
+        NORMAL = 0, //通常
+        INTERNAL_WH = 1, //内部WH攻撃
+        EXTERNAL_WH = 2  //外部WH攻撃
+    };
+
+    void SetWhMode(uint8_t mode)
+    {
+      m_whMode = mode;
+    }
+
+    uint8_t GetWhMode() const
+    {
+      return m_whMode;
+    }
+
   protected:
     void DoInitialize() override;
 
@@ -366,6 +383,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
         std::set<Ipv4Address> awaited;  // まだ結果が来ていない witness
         EventId timeoutEvent;           // Case3 タイムアウトイベント
         bool replyReceived = false;     // AUTHREP を受信したか？
+
+        bool isRebroadcasted = false;  //判定対象ノードがWH攻撃の影響下か
     };
     
     // m_step3ResultTable[A][B] = Step3ResultEntry
@@ -380,6 +399,54 @@ class RoutingProtocol : public Ipv4RoutingProtocol
 
     Ptr<Socket> m_whSocket;         // WH トンネル用ソケット
     uint16_t m_whPort;         // WH トンネル用ポート番号
+
+    //WHリンクの長さ
+    int m_WH_link_length;
+    
+    //WHリンクの長さを設定
+    void SetWHLinkLength(int length)
+    {
+        m_WH_link_length = length;
+    }
+
+    //WHリンクの長さを取得
+    int GetWHLinkLength() const
+    {
+        return m_WH_link_length;
+    }
+
+    struct RouteLatencyEntry
+    {
+        Time start;      // RREQ 送信時刻
+        Time established; // RREP 受信時刻
+        Time latency;     // 経路作成時間
+    };
+
+    struct WhDetectionStats
+    {
+        uint32_t detectedWh = 0;    //WH攻撃を正常に検知した回数 true positive
+        uint32_t undetectedWh = 0;  //WH攻撃を検知できなかった回数 false negative
+        uint32_t falsePositive = 0; //正常ノードをご検知した回数  false positive
+        uint32_t truenegative = 0; //正常ノードを正常ノードと判定した回数  ture negative
+
+        uint32_t notApplicable = 0;  // ★ 判定対象外（NA）
+
+        uint64_t detectionBytes = 0;
+
+        std::map<uint32_t, RouteLatencyEntry> m_latencyTable;
+    };
+
+    WhDetectionStats m_whStats;
+
+    WhDetectionStats Getevaluation()
+    {
+      return m_whStats;
+    }
+
+    uint64_t m_totalAodvCtrlMessages = 0;
+    uint64_t m_totalAodvCtrlBytes = 0;
+
+    uint8_t m_whMode; // 0=normal,1=internal,2=external
 
   private:
     /// Start protocol operation
@@ -456,7 +523,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param rrepHeader RREP message header
      * @param receiverIfaceAddr receiver interface IP address
      */
-    void ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiverIfaceAddr);
+    void ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiverIfaceAddr, bool whre);
 
     void SendDetectionResult(DetectionReqEntry* entry, uint8_t stepflag, uint8_t detectionflag);
 
@@ -488,13 +555,19 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param target 判定対象ノード
      * @param commonNeighbors 共通隣接ノード
      */
-    void StartStep3Detection(Ipv4Address startnode ,Ipv4Address target, const std::set<ns3::Ipv4Address> NA, const std::set<ns3::Ipv4Address> NB,const std::set<ns3::Ipv4Address> commonNeighbors);
+    void StartStep3Detection(Ipv4Address startnode ,
+                             Ipv4Address target, 
+                             const std::set<ns3::Ipv4Address> NA, 
+                             const std::set<ns3::Ipv4Address> NB,
+                             const std::set<ns3::Ipv4Address> commonNeighbors, 
+                             bool isRebroadcasted);
 
     //StartStep3Detection用のリトライ関数
     void StartStep3DetectionRetry(Ipv4Address A, Ipv4Address B,
                                           std::set<Ipv4Address> NA,
                                           std::set<Ipv4Address> NB,
-                                          std::set<Ipv4Address> commonNeighbors);
+                                          std::set<Ipv4Address> commonNeighbors,
+                                          bool isRebroadcasted);
     
     bool PromiscSniff(Ptr<NetDevice> dev,
                               Ptr<const Packet> packet,
@@ -620,7 +693,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     void RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
 
     //ステップ3　AUTHREPタイムアウト処理
-    void Step3TimeoutCheck(Ipv4Address A, Ipv4Address B);
+    void Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadcast);
 
     //ステップ3監視結果メッセージを受信した場合の処理
     void RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
@@ -664,7 +737,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      */
     void SendReplyByIntermediateNode(RoutingTableEntry& toDst,
                                      RoutingTableEntry& toOrigin,
-                                     bool gratRep);
+                                     bool gratRep,
+                                     uint32_t messageid);
     /** Send RREP_ACK
      * @param neighbor neighbor address
      */

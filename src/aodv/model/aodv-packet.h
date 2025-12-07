@@ -449,6 +449,7 @@ class RrepHeader : public Header
                Ipv4Address origin = Ipv4Address(),
                Ipv4Address sender = Ipv4Address(),
                Time lifetime = MilliSeconds(0),
+               uint32_t messageID = 0,
                uint8_t WHForwardFlag = 0,
                uint32_t NeighborCount = 0,
                float NeighborRatio = 0.0,
@@ -559,6 +560,17 @@ class RrepHeader : public Header
      */
     Time GetLifeTime() const;
 
+    //経路作成時間を取得するためにメッセージID設定または取得
+    void SetMessageID(uint32_t id)
+    {
+      m_messageID = id;
+    }
+
+    uint32_t GetMessageID() const
+    {
+      return m_messageID;
+    }
+
     //内部WH WHノード間転送フラグ 設定・取得
     void SetWHForwardFlag(uint8_t f)
     {
@@ -649,6 +661,7 @@ class RrepHeader : public Header
     Ipv4Address m_origin; ///< Source IP Address
     Ipv4Address m_sender; ///< RREP送信ノードのIPアドレス
     uint32_t m_lifeTime;  ///< Lifetime (in milliseconds)
+    uint32_t m_messageID;
     uint8_t m_WHForwardFlag; ///< 内部WH攻撃用転送フラグ
     uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
     float m_NeighborRatio;    ///< 隣接ノード比率

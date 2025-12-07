@@ -227,6 +227,7 @@ struct RrepHeaderTest : public TestCase
                      /*dst*/ Ipv4Address("1.2.3.4"),
                      /*dstSeqNo*/ 2,
                      /*origin*/ Ipv4Address("4.3.2.1"),
+                     /*sender*/Ipv4Address("4.3.2.1"),
                      /*lifetime*/ Seconds(3));
         NS_TEST_EXPECT_MSG_EQ(h.GetPrefixSize(), 0, "trivial");
         NS_TEST_EXPECT_MSG_EQ(h.GetHopCount(), 12, "trivial");

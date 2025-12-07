@@ -338,6 +338,7 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
                        Ipv4Address origin,
                        Ipv4Address sender,
                        Time lifeTime,
+                       /*メッセージID*/uint32_t messageID,
                        uint8_t WHForwardFlag,
                        uint32_t NeighborCount,
                        float NeighborRatio,
@@ -349,6 +350,7 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
       m_dstSeqNo(dstSeqNo),
       m_origin(origin),
       m_sender(sender),
+      m_messageID(messageID),
       m_WHForwardFlag(WHForwardFlag),
       m_NeighborCount(NeighborCount),
       m_NeighborRatio(NeighborRatio),
@@ -385,6 +387,7 @@ RrepHeader::GetSerializedSize() const
     return 19 
     + 1 /*WHForwardFlag*/ 
     + 4 /*NeighborCount*/
+    + 4 //メッセージID
     // + 1 /*AnotherRouteCreateFlag*/
     + 4 /*NeighborRatio*/
     + 4 //センダーのIPアドレス
@@ -404,6 +407,7 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     WriteTo(i, m_origin);
     WriteTo(i, m_sender); // センダーのIPアドレスをシリアル化する
     i.WriteHtonU32(m_lifeTime);
+    i.WriteHtonU32(m_messageID);
     i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
     i.WriteHtonU32(m_NeighborCount); // NeighborCountを4バイトとしてシリアル化する
     i.WriteHtonU32(static_cast<uint32_t>(m_NeighborRatio * 10000)); // NeighborRatioを4バイトとしてシリアル化する
@@ -431,6 +435,7 @@ RrepHeader::Deserialize(Buffer::Iterator start)
     ReadFrom(i, m_origin);
     ReadFrom(i, m_sender); // センダーのIPアドレスをデシリアル化する
     m_lifeTime = i.ReadNtohU32();
+    m_messageID = i.ReadNtohU32();
     m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
     m_NeighborCount = i.ReadNtohU32(); // NeighborCountを4バイトとしてデシリアル化する
     m_NeighborRatio = static_cast<float>(i.ReadNtohU32()) / 10000.0f; // NeighborRatioを4バイトとしてデシリアル化する
