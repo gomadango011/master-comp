@@ -210,22 +210,58 @@ class RoutingProtocol : public Ipv4RoutingProtocol
         return &m_routingTable;
     }
 
-    //WH攻撃のモードの状態を管理
-    enum WhMode {
-        NORMAL = 0, //通常
-        INTERNAL_WH = 1, //内部WH攻撃
-        EXTERNAL_WH = 2  //外部WH攻撃
+    struct RouteLatencyEntry
+    {
+        Time start;      // RREQ 送信時刻
+        Time established; // RREP 受信時刻
+        Time latency;     // 経路作成時間
     };
+
+    struct WhDetectionStats
+    {
+        uint32_t detectedWh = 0;    //WH攻撃を正常に検知した回数 true positive
+        uint32_t undetectedWh = 0;  //WH攻撃を検知できなかった回数 false negative
+        uint32_t falsePositive = 0; //正常ノードをご検知した回数  false positive
+        uint32_t truenegative = 0; //正常ノードを正常ノードと判定した回数  ture negative
+
+        uint32_t notApplicable = 0;  // ★ 判定対象外（NA）
+
+        uint64_t totalAodvCtrlMessages = 0;
+        uint64_t totalAodvCtrlBytes = 0;
+
+        std::map<uint32_t, RouteLatencyEntry> m_latencyTable;
+    };
+
+    WhDetectionStats m_whStats;
+
+    WhDetectionStats Getevaluation()
+    {
+      return m_whStats;
+    }
+
+    enum WhMode {
+        NORMAL = 0,       //ノーマル
+        MASTER_INWH = 1,
+        EXIST_INWH = 2,  //内部WH攻撃
+        EXTERNAL_WH = 3   //外部WH攻撃
+    };
+
+    uint8_t m_whMode;
 
     void SetWhMode(uint8_t mode)
     {
       m_whMode = mode;
     }
-
     uint8_t GetWhMode() const
     {
       return m_whMode;
     }
+
+    bool m_rreqStartRecorded = false;   // 最初の RREQ の時刻が記録されたか？
+    bool m_rrepReceived = false;        // 最初の RREP を受信したか？
+    Time m_routeStartTime;              // 経路作成開始時刻
+    Time m_routeEndTime;                // 経路作成終了時刻
+
 
   protected:
     void DoInitialize() override;
@@ -414,39 +450,6 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     {
         return m_WH_link_length;
     }
-
-    struct RouteLatencyEntry
-    {
-        Time start;      // RREQ 送信時刻
-        Time established; // RREP 受信時刻
-        Time latency;     // 経路作成時間
-    };
-
-    struct WhDetectionStats
-    {
-        uint32_t detectedWh = 0;    //WH攻撃を正常に検知した回数 true positive
-        uint32_t undetectedWh = 0;  //WH攻撃を検知できなかった回数 false negative
-        uint32_t falsePositive = 0; //正常ノードをご検知した回数  false positive
-        uint32_t truenegative = 0; //正常ノードを正常ノードと判定した回数  ture negative
-
-        uint32_t notApplicable = 0;  // ★ 判定対象外（NA）
-
-        uint64_t detectionBytes = 0;
-
-        std::map<uint32_t, RouteLatencyEntry> m_latencyTable;
-    };
-
-    WhDetectionStats m_whStats;
-
-    WhDetectionStats Getevaluation()
-    {
-      return m_whStats;
-    }
-
-    uint64_t m_totalAodvCtrlMessages = 0;
-    uint64_t m_totalAodvCtrlBytes = 0;
-
-    uint8_t m_whMode; // 0=normal,1=internal,2=external
 
   private:
     /// Start protocol operation

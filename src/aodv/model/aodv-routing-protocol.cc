@@ -1430,8 +1430,8 @@ RoutingProtocol::SendTo(Ptr<Socket> socket, Ptr<Packet> packet, Ipv4Address dest
     socket->SendTo(packet, 0, InetSocketAddress(destination, AODV_PORT));
 
     //総メッセージ取得
-    m_totalAodvCtrlMessages++;
-    m_totalAodvCtrlBytes += packet->GetSize();
+    m_whStats.totalAodvCtrlMessages++;
+    m_whStats.totalAodvCtrlBytes += packet->GetSize();
 }
 
 void
@@ -2140,8 +2140,8 @@ RoutingProtocol::SendReply(const RreqHeader& rreqHeader, const RoutingTableEntry
     socket->SendTo(packet, 0, InetSocketAddress(toOrigin.GetNextHop(), AODV_PORT));
 
     //総メッセージ取得
-    m_totalAodvCtrlMessages++;
-    m_totalAodvCtrlBytes += packet->GetSize();
+    m_whStats.totalAodvCtrlMessages++;
+    m_whStats.totalAodvCtrlBytes += packet->GetSize();
 }
 
 void
@@ -2188,8 +2188,8 @@ RoutingProtocol::SendReplyByIntermediateNode(RoutingTableEntry& toDst,
     socket->SendTo(packet, 0, InetSocketAddress(toOrigin.GetNextHop(), AODV_PORT));
 
     //総メッセージ取得
-    m_totalAodvCtrlMessages++;
-    m_totalAodvCtrlBytes += packet->GetSize();
+    m_whStats.totalAodvCtrlMessages++;
+    m_whStats.totalAodvCtrlBytes += packet->GetSize();
 
     // Generating gratuitous RREPs
     if (gratRep)
@@ -2214,8 +2214,8 @@ RoutingProtocol::SendReplyByIntermediateNode(RoutingTableEntry& toDst,
         socket->SendTo(packetToDst, 0, InetSocketAddress(toDst.GetNextHop(), AODV_PORT));
     
         //総メッセージ取得
-        m_totalAodvCtrlMessages++;
-        m_totalAodvCtrlBytes += packet->GetSize();
+        m_whStats.totalAodvCtrlMessages++;
+        m_whStats.totalAodvCtrlBytes += packet->GetSize();
     }
 }
 
@@ -2238,8 +2238,8 @@ RoutingProtocol::SendReplyAck(Ipv4Address neighbor)
     socket->SendTo(packet, 0, InetSocketAddress(neighbor, AODV_PORT));
 
     //総メッセージ取得
-    m_totalAodvCtrlMessages++;
-    m_totalAodvCtrlBytes += packet->GetSize();
+    m_whStats.totalAodvCtrlMessages++;
+    m_whStats.totalAodvCtrlBytes += packet->GetSize();
 }
 
 void
@@ -2551,8 +2551,8 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
     socket->SendTo(packet, 0, InetSocketAddress(toOrigin.GetNextHop(), AODV_PORT));
 
     //総メッセージ取得
-    m_totalAodvCtrlMessages++;
-    m_totalAodvCtrlBytes += packet->GetSize();
+    m_whStats.totalAodvCtrlMessages++;
+    m_whStats.totalAodvCtrlBytes += packet->GetSize();
 }
 
 void
@@ -2795,99 +2795,6 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         m_nb.Update(rrepHeader.GetDst(), Time(m_allowedHelloLoss * m_helloInterval));
     }
 
-    // //内部WH攻撃
-    // //WHノードがHelloメッセージを受信した場合、転送フラグを立てて相方に転送
-    // //攻撃者がAODVのアドレスでhelloメッセージを受信した場合、フラグを立てて相方に転送
-    // if(receiver == Ipv4Address("10.0.0.2") || receiver == Ipv4Address("10.0.0.3"))
-    // {
-    //     //相方のIPアドレスを設定し、転送フラグを立てる
-    //     Ipv4Address partner;
-    //     if(receiver == Ipv4Address("10.0.0.2"))
-    //     {
-    //         partner = Ipv4Address("10.1.2.2");
-    //         rrepHeader.SetWHForwardFlag(1);
-
-    //     }else if(receiver == Ipv4Address("10.0.0.3"))
-    //     {
-    //         partner = Ipv4Address("10.1.2.1");
-    //         rrepHeader.SetWHForwardFlag(2);
-    //     }
-
-    //     //相方にhelloメッセージを転送
-    //     NS_LOG_DEBUG("WHノード" << receiver <<"が受信したHelloメッセージを相方" << partner << "に転送");
-
-    //     //相方までのルートを取得
-    //     RoutingTableEntry toPartner;
-    //     if (!m_routingTable.LookupRoute(partner, toPartner))
-    //     {
-    //         //ルートが存在しない場合、メッセージをドロップ
-    //         NS_LOG_DEBUG("パートナーへのルートがありません。メッセージをドロップします " << partner);
-    //         return;
-    //     }else{
-    //         NS_LOG_DEBUG("パートナーノードへのルートが見つかりました: " << toPartner.GetDestination());
-    //     }
-
-    //     ForwardHelloToPartner(rrepHeader, toPartner);
-
-    //     return;
-    // }
-
-    // //転送されたHelloメッセージを受信した場合、受信したノードが相方ノードかどうかを確認し、相方ノードであればメッセージを再ブロードキャスト
-    // if(rrepHeader.GetWHForwardFlag() == 1 || rrepHeader.GetWHForwardFlag() == 2)
-    // {
-    //     if(rrepHeader.GetWHForwardFlag() == 1)
-    //     {
-    //         NS_LOG_DEBUG("WH転送フラグ1付きのHelloメッセージを受信しました。");
-
-    //         if(receiver == Ipv4Address("10.1.2.2"))
-    //         {
-    //             NS_LOG_DEBUG("相方ノードに到達しました: " << receiver);
-    //         }else{
-    //             NS_LOG_DEBUG("相方ノード以外がHelloメッセージを受信しました: " << receiver);
-    //             return;
-    //         }
-    //     }else{
-    //         NS_LOG_DEBUG("WH転送フラグ2付きのHelloメッセージを受信しました。");
-
-    //         if(receiver == Ipv4Address("10.1.2.1"))
-    //         {
-    //             NS_LOG_DEBUG("相方ノードに到達しました: " << receiver);
-    //         }else{
-    //             NS_LOG_DEBUG("相方ノード以外がHelloメッセージを受信しました: " << receiver);
-    //             return;
-    //         }
-    //     }
-
-    //     rrepHeader.SetWHForwardFlag(3); //転送完了フラグを立てる
-
-    //     //転送先で再ブロードキャスト
-    //     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
-    //     {
-    //         Ptr<Socket> socket = j->first;
-    //         Ipv4InterfaceAddress iface = j->second;
-    //         Ptr<Packet> packet = Create<Packet>();
-    //         SocketIpTtlTag ttl;
-    //         ttl.SetTtl(1);
-    //         packet->AddPacketTag(ttl);
-    //         packet->AddHeader(rrepHeader);
-    //         TypeHeader tHeader(AODVTYPE_RREP);
-    //         packet->AddHeader(tHeader);
-    //         // Send to all-hosts broadcast if on /32 addr, subnet-directed otherwise
-    //         Ipv4Address destination;
-    //         if (iface.GetMask() == Ipv4Mask::GetOnes())
-    //         {
-    //             destination = Ipv4Address("255.255.255.255");
-    //         }else
-    //         {
-    //             destination = iface.GetBroadcast();
-    //         }
-
-    //         Time jitter = MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10));
-    //         Simulator::Schedule(jitter, &RoutingProtocol::SendTo, this, socket, packet, destination);
-    //     }
-    //     return;
-    // }
-
     // =========================================================
     // ここから CREDND ステップ2 用の処理
     // A: receiver (このノード), B: rrepHeader.GetDst()
@@ -3099,6 +3006,14 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
 
     }else{
         NS_LOG_DEBUG("隣接ノード比率が閾値以下のため判定不要　　隣接ノード比率"<< rB << "　　送信元ノード：" << rrepHeader.GetDst());
+        
+        if(isRebroadcasted || receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.1"))
+        {
+            NS_LOG_DEBUG("WHリンクを正常リンクとご検知");
+            m_whStats.detectedWh ++;
+        }else{
+            m_whStats.truenegative++;
+        }
     }
 
     return;
@@ -3142,8 +3057,8 @@ RoutingProtocol::ForwardHelloToPartner(const RrepHeader& rrepHeader,
     socket->SendTo(packet, 0, InetSocketAddress(toPartner.GetNextHop(), AODV_PORT));
 
     //総メッセージ取得
-    m_totalAodvCtrlMessages++;
-    m_totalAodvCtrlBytes += packet->GetSize();
+    m_whStats.totalAodvCtrlMessages++;
+    m_whStats.totalAodvCtrlBytes += packet->GetSize();
 
     NS_LOG_DEBUG("Forwarded Hello message from " << rrepHeader.GetDst()
                                                  << " to WH partner " << toPartner.GetDestination());
@@ -4583,7 +4498,9 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
                       << " が判定対象ノード " << B
                       << " から AUTHREP を偽装/転送で受信");
         
-        if(entry.isRebroadcasted)
+        if(entry.isRebroadcasted
+           ||A == Ipv4Address("10.1.2.1")
+           ||A == Ipv4Address("10.1.2.2"))
         {
             //WHノードを正常に検知
             m_whStats.detectedWh++;
@@ -5619,8 +5536,8 @@ RoutingProtocol::SendRerrWhenNoRouteToForward(Ipv4Address dst,
         socket->SendTo(packet, 0, InetSocketAddress(toOrigin.GetNextHop(), AODV_PORT));
     
         //総メッセージ取得
-        m_totalAodvCtrlMessages++;
-        m_totalAodvCtrlBytes += packet->GetSize();
+        m_whStats.totalAodvCtrlMessages++;
+        m_whStats.totalAodvCtrlBytes += packet->GetSize();
     }
     else
     {
@@ -5643,8 +5560,8 @@ RoutingProtocol::SendRerrWhenNoRouteToForward(Ipv4Address dst,
             socket->SendTo(packet->Copy(), 0, InetSocketAddress(destination, AODV_PORT));
         
             //総メッセージ取得
-        m_totalAodvCtrlMessages++;
-        m_totalAodvCtrlBytes += packet->GetSize();
+        m_whStats.totalAodvCtrlMessages++;
+        m_whStats.totalAodvCtrlBytes += packet->GetSize();
         }
     }
 }
