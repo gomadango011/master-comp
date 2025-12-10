@@ -2232,9 +2232,15 @@ RoutingProtocol::SendReplyAck(Ipv4Address neighbor)
     packet->AddHeader(h);
     packet->AddHeader(typeHeader);
     RoutingTableEntry toNeighbor;
-    m_routingTable.LookupRoute(neighbor, toNeighbor);
+    if(!m_routingTable.LookupRoute(neighbor, toNeighbor))
+    {
+        return;
+    }
     Ptr<Socket> socket = FindSocketWithInterfaceAddress(toNeighbor.GetInterface());
-    NS_ASSERT(socket);
+    if(!socket)
+    {
+        return;
+    }
     socket->SendTo(packet, 0, InetSocketAddress(neighbor, AODV_PORT));
 
     //総メッセージ取得
@@ -2753,7 +2759,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
      * ノードがネイバーから Hello メッセージを受信するたびに、ノードはネイバーへのアクティブなルートがあることを確認し、必要に応じてルートを作成する必要があります。
      */
 
-    NS_LOG_DEBUG("Helloメッセージを " << receiver << " が " << rrepHeader.GetDst() << " から受信");
+    NS_LOG_DEBUG("Helloメッセージを " << receiver << " が " << rrepHeader.GetDst() << " から受信" << rrepHeader.GetNeighborCount());
 
     double rB = rrepHeader.GetNeighborRatio();
 
@@ -2818,12 +2824,18 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
     // グラフに自分(A)のエントリがない場合は作成
     if (m_localGraph.find(receiver) == m_localGraph.end())
     {
-        m_localGraph[receiver] = neighborList;
+        for (auto &n : neighborList)
+        {
+            m_localGraph[receiver].insert(n);
+            m_localGraph[n].insert(receiver);
+        }
     }
     else{
-        //自身の隣接ノードリストを更新
-        m_localGraph[receiver].clear();
-        m_localGraph[receiver] = neighborList; // = m_nb.GetNeighbors()
+        for (auto &n : neighborList)
+        {
+            m_localGraph[receiver].insert(n);
+            m_localGraph[n].insert(receiver);
+        }
     }
 
     // ----- NB: B の 1-hop 隣接集合（Hello に含まれる neighborList） -----
@@ -2834,11 +2846,17 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
 
     if(m_localGraph.find(helloSender) == m_localGraph.end())
     {
-        m_localGraph[helloSender] = NB;
+        for (auto &n : NB)
+        {
+            m_localGraph[helloSender].insert(n);
+            m_localGraph[n].insert(helloSender); // これが重要！
+        }
     }else{
-        //自身の隣接ノードリストを更新
-        m_localGraph[helloSender].clear();
-        m_localGraph[helloSender] = NB;
+        for (auto &n : NB)
+        {
+            m_localGraph[helloSender].insert(n);
+            m_localGraph[n].insert(helloSender); // これが重要！
+        }
     }
 
     // sender を自分(A)の隣接リストに追加
@@ -2945,6 +2963,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     m_whStats.detectedWh++;
                 }else{
                     //正常ノードをご検知
+                    NS_LOG_DEBUG("特例によりご検知");
                     m_whStats.falsePositive++;
                 }
 
@@ -2967,7 +2986,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         //判定対象ノードの隣接ノードリストの型を変更
         std::set<Ipv4Address> st(targetNeighborList.begin(), targetNeighborList.end());
 
-        int wormholeThreshold = 4;
+        int wormholeThreshold = 5;
         for (auto oi : exclusiveNeighbors) {
             for (auto oj : exclusiveNeighbors) {
                 if (oi == oj) continue;
@@ -2978,7 +2997,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                                 << " oj=" << oj
                                 << " hop=" << hop);
 
-                if (hop == -1 || hop >= wormholeThreshold) {
+                if (hop >= wormholeThreshold) {
                     NS_LOG_INFO("判定開始ノード：" << receiver << "　判定対象ノード：" << rrepHeader.GetDst() << "　がWH攻撃の影響下にある可能性があります。");
                     
                     //ブラックリストに登録
@@ -2991,6 +3010,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                         //WHノードを正常に検知
                         m_whStats.detectedWh++;
                     }else{
+                        NS_LOG_DEBUG("排他的隣接ノード数の別経路により、ご検知");
                         //正常ノードをWHノードとご検知
                         m_whStats.falsePositive++;
                     }
@@ -3089,6 +3109,12 @@ RoutingProtocol::CalcHopCountBfs(
         Ipv4Address u = current.first;
         int dist = current.second;
 
+        // もし u 自身が forbidden に入っていたら、そのノードから拡張しない
+        if (forbidden.count(u))
+        {
+            continue;
+        }
+        
         // ゴール判定
         if (u == dst)
         {
@@ -3098,6 +3124,7 @@ RoutingProtocol::CalcHopCountBfs(
         // ローカルグラフに存在しない場合は次へ
         if (m_localGraph.find(u) == m_localGraph.end())
         {
+            NS_LOG_DEBUG("ローカルグラフに存在しません。");
             continue;
         }
 
@@ -3110,6 +3137,7 @@ RoutingProtocol::CalcHopCountBfs(
             // 未訪問なら追加
             if (!visited.count(v))
             {
+                NS_LOG_DEBUG(v << "を未訪問リストに追加。");
                 visited.insert(v);
                 q.push(std::make_pair(v, dist + 1));
             }
@@ -3146,33 +3174,34 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,
     NS_LOG_INFO("判定開始ノード(A): " << startnode
                 << " 判定対象ノード(B): " << target);
 
-    //共通隣接ノード数が0の場合
-    if (commonNeighbors.empty())
-    {
-        NS_LOG_WARN("[Step3] 共通隣接ノードが存在しません (|NA∩NB|=0). s=0 として WH攻撃扱いになります。");
+    // //共通隣接ノード数が0の場合
+    // if (commonNeighbors.empty())
+    // {
+    //     NS_LOG_WARN("[Step3] 共通隣接ノードが存在しません (|NA∩NB|=0). s=0 として WH攻撃扱いになります。");
 
-        // ブラックリスト登録（あなたの登録関数に合わせて修正）
-        m_blacklist.insert(target);
+    //     // ブラックリスト登録（あなたの登録関数に合わせて修正）
+    //     m_blacklist.insert(target);
 
-        if(isRebroadcasted
-            || startnode == Ipv4Address("10.1.2.1")
-            || startnode == Ipv4Address("10.1.2.2"))
-        {
-            //正常にWH攻撃を検知
-            m_whStats.detectedWh++;
-        }else{
-            //正常ノードをWHノードとご検知
-            m_whStats.falsePositive++;
-        }
+    //     if(isRebroadcasted
+    //         || startnode == Ipv4Address("10.1.2.1")
+    //         || startnode == Ipv4Address("10.1.2.2"))
+    //     {
+    //         //正常にWH攻撃を検知
+    //         m_whStats.detectedWh++;
+    //     }else{
+    //         //正常ノードをWHノードとご検知
+    //         NS_LOG_DEBUG("共通隣接ノードが存在しないため、ご検知");
+    //         m_whStats.falsePositive++;
+    //     }
 
-        // エントリ削除（安全性のため）
-        m_step3ResultTable[startnode].erase(target);
-        if (m_step3ResultTable[startnode].empty())
-        {
-            m_step3ResultTable.erase(startnode);
-        }
-        return;
-    }
+    //     // エントリ削除（安全性のため）
+    //     m_step3ResultTable[startnode].erase(target);
+    //     if (m_step3ResultTable[startnode].empty())
+    //     {
+    //         m_step3ResultTable.erase(startnode);
+    //     }
+    //     return;
+    // }
 
     // ---------------------------------------------------------
     // ★ 監視結果管理テーブルの初期化
@@ -4134,7 +4163,11 @@ RoutingProtocol::SendVs(Ipv4Address dst, Ipv4Address origin, Ipv4Address target,
     TypeHeader tHeader(AODVTYPE_VSR);
     packet->AddHeader(tHeader);
     Ptr<Socket> socket = FindSocketWithInterfaceAddress(toDst.GetInterface());
-    NS_ASSERT(socket);
+    if(!socket)
+    {
+        NS_LOG_DEBUG("sendVsのソケットが壊れています。");
+        return;
+    }
     // socket->SendTo(packet, 0, InetSocketAddress(toDst.GetNextHop(), AODV_PORT));
     SendTo(socket, packet, toDst.GetNextHop());
 }
@@ -4505,6 +4538,7 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
             //WHノードを正常に検知
             m_whStats.detectedWh++;
         }else{
+            NS_LOG_DEBUG("認証応答メッセージ受信元が異なるため、ご検知");
             //正常ノードをご検知
             m_whStats.falsePositive++;
         }
@@ -4566,6 +4600,7 @@ RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadc
             //WH攻撃を正常に判定
             m_whStats.detectedWh++;
         }else{
+            NS_LOG_DEBUG("共通隣接ノードのタグにより、ご検知");
             //正常ノードをご検知
             m_whStats.falsePositive++;
         }
@@ -4787,7 +4822,14 @@ RoutingProtocol::SendStep3Result(Ipv4Address origin,
     packet->AddHeader(tHeader);
 
     Ptr<Socket> socket = FindSocketWithInterfaceAddress(toA.GetInterface());
-    NS_ASSERT(socket);
+    if(!socket)
+    {
+        NS_LOG_ERROR("SendStep3Result: no socket for iface="
+                 << toA.GetInterface().GetLocal()
+                 << " (route entry broken?)");
+
+        return;
+    }
 
     NS_LOG_DEBUG("[Step3][監視ノード=" << witness
                  << "] 監視結果メッセージを 判定開始ノード A=" << origin
@@ -5335,7 +5377,8 @@ RoutingProtocol::SendHello()
      */
 
     //隣接ノード数を取得
-    uint32_t neigborCount = m_nb.GetNeighborCount();
+    uint32_t neigborCount ;
+
     NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal() << " の隣接ノード数: " << neigborCount);
     
     //隣接ノード数の平均隣接ノード数と、自身の隣接ノードをリストアップ
@@ -5350,6 +5393,7 @@ RoutingProtocol::SendHello()
         {
             NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination() 
                           << "隣接ノードの隣接ノード数：" << e.GetNeighborCount());
+            neigborCount++;
             totalNeighborCount += e.GetNeighborCount();
             neighborList.push_back(e.GetDestination());
         }
@@ -5387,9 +5431,14 @@ RoutingProtocol::SendHello()
                                /*origin=*/iface.GetLocal(),
                                /*sender=*/iface.GetLocal(),
                                /*lifetime=*/Time(m_allowedHelloLoss * m_helloInterval),
+                               /*messageID*/0,
                                /*whForwardFlag=*/0,//通常のHelloメッセージとして設定
                                 /*neighborCount=*/neigborCount,
-                                /*neighborRatio=*/neighborRatio);
+                                /*neighborRatio=*/neighborRatio
+                                /*neighborList*/    
+                            );
+
+        NS_LOG_DEBUG("helloメッセージ送信時の隣接ノード数：" << neigborCount);
             
         //helloメッセージに隣接ノードリストを記載
         helloHeader.SetNeighborList(neighborList); //隣接ノードリストを設定
