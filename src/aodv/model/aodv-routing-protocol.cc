@@ -1393,6 +1393,16 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
 
     m_whStats.m_latencyTable[m_requestId] = entry;
 
+    // ★ 経路作成開始時刻の記録（最初の1回のみ）
+    if (!m_rreqStartRecorded)
+    {
+        m_routeStartTime = Simulator::Now();
+        m_rreqStartRecorded = true;
+
+        NS_LOG_DEBUG("[LATENCY] Route discovery START at "
+                    << m_routeStartTime.GetSeconds());
+    }
+
     ScheduleRreqRetry(dst);
 }
 
@@ -2402,6 +2412,26 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
             m_routingTable.Update(newEntry);
             m_addressReqTimer[dst].Cancel();
             m_addressReqTimer.erase(dst);
+        }
+
+        // ★ 最初の RREP のみ経路作成終了とする
+        if (!m_rrepReceived)
+        {
+            m_routeEndTime = Simulator::Now();
+            m_rrepReceived = true;
+
+            Time latency = m_routeEndTime - m_routeStartTime;
+
+            NS_LOG_DEBUG("[LATENCY] FIRST RREP RECEIVED");
+            NS_LOG_DEBUG("[LATENCY] Route discovery END at "
+                        << m_routeEndTime.GetSeconds());
+            NS_LOG_DEBUG("[LATENCY] Total latency = "
+                        << latency.GetSeconds() << " sec");
+
+            // 必要なら latency を m_whStats に保存
+            m_whStats.m_latencyTable[0].start = m_routeStartTime;
+            m_whStats.m_latencyTable[0].established = m_routeEndTime;
+            m_whStats.m_latencyTable[0].latency = latency;
         }
 
         //経路作成時間を取得
@@ -5379,7 +5409,7 @@ RoutingProtocol::SendHello()
     //隣接ノード数を取得
     uint32_t neigborCount ;
 
-    NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal() << " の隣接ノード数: " << neigborCount);
+    NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal());
     
     //隣接ノード数の平均隣接ノード数と、自身の隣接ノードをリストアップ
     uint32_t totalNeighborCount = 0;  //全隣接ノードの隣接ノード数の合計
