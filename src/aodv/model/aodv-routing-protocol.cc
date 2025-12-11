@@ -169,9 +169,9 @@ RoutingProtocol::RoutingProtocol()
       m_nb(m_helloInterval),
       m_rreqCount(0),
       m_rerrCount(0),
-      m_whNeighborThreshold(1.2f), //隣接ノード比率のしきい値を初期化
+      m_whNeighborThreshold(1.2), //隣接ノード比率のしきい値を初期化
       m_sendBlocked(false),
-      m_step3ReplyWaitTime(3*m_nodeTraversalTime),
+      m_step3ReplyWaitTime(8*m_nodeTraversalTime),
       m_isWhNode(false),          // WH ノードフラグを初期化
       m_whPeerIp(Ipv4Address()), // WH 相方ノード
       m_htimer(Timer::CANCEL_ON_DESTROY),
@@ -2264,6 +2264,8 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
     NS_LOG_FUNCTION(this << " src " << sender);
 
     // // WH再ブロードキャストタグの確認
+
+    NS_LOG_DEBUG("RREP受信");
     WhRebroadcastTag whReTag;
     bool isRebroadcasted = false;
     if (p->RemovePacketTag(whReTag) && whReTag.Get())
@@ -2278,8 +2280,12 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         }
     }
 
+    NS_LOG_DEBUG("転送処理終了");
+
     RrepHeader rrepHeader;
+    NS_LOG_DEBUG("Before RemoveHeader");
     p->RemoveHeader(rrepHeader);
+    NS_LOG_DEBUG("After RemoveHeader");
 
     //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
     if(m_isWhNode && fromWh)
@@ -2301,6 +2307,7 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
 
         return;
     }
+    NS_LOG_DEBUG("再ブロードキャスト処理終了");
 
     Ipv4Address dst = rrepHeader.GetDst();
     NS_LOG_LOGIC("RREP destination " << dst << " RREP origin " << rrepHeader.GetOrigin());
@@ -2897,6 +2904,12 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         m_localGraph[receiver].insert(helloSender);
     }
 
+    if(rB == 0)
+    {
+        NS_LOG_DEBUG("判定対象ノードの隣接ノード比率が0のため、検知対象にしません。");
+        return;
+    }
+
     NS_LOG_DEBUG("ステップ2検知開始");
 
     //受信したhelloパケットの隣接ノード比率が閾値を上回る場合、WH攻撃検知を開始
@@ -2931,6 +2944,13 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                 commonNeighbors.insert(n);
             }
         }
+        if(isRebroadcasted
+                    || receiver == Ipv4Address("10.1.2.1")
+                    || receiver == Ipv4Address("10.1.2.2")
+          )
+        {
+            NS_LOG_DEBUG("WHリンクの隣接ノード比率：" << rB);
+        }
 
         // 排他的隣接ノード数が１以下の場合、例外処理を実行
         if (exclusiveNeighbors.size() < 2)
@@ -2954,7 +2974,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                 }
             }
 
-            //Aの隣接ノード数 > 0 && Aの隣接ノードの隣接ノード数 > 0の場合、通常通り計算
+            //Aの隣接ノード数 > 0 && Aの隣接ノードの隣接ノード数 > 0の場合、Aの隣接ノード平均隣接ノードを計算
             double avgNeighborCount = (validNeighborNum > 0 && sumNeighborCount > 0.0)
                                       ? (sumNeighborCount / static_cast<double>(validNeighborNum))
                                       : 0.0;
@@ -2970,7 +2990,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
             }
 
             // CREDND の特例ケースのしきい値 (論文では 1.5)
-            const double specialRatioThreshold = 1.5;
+            const double specialRatioThreshold = 3;
 
             NS_LOG_DEBUG("特例ケース判定:"
                          << " A=" << receiver
@@ -3060,7 +3080,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         if(isRebroadcasted || receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.1"))
         {
             NS_LOG_DEBUG("WHリンクを正常リンクとご検知");
-            m_whStats.detectedWh ++;
+            m_whStats.undetectedWh ++;
         }else{
             m_whStats.truenegative++;
         }
@@ -3167,7 +3187,7 @@ RoutingProtocol::CalcHopCountBfs(
             // 未訪問なら追加
             if (!visited.count(v))
             {
-                NS_LOG_DEBUG(v << "を未訪問リストに追加。");
+                // NS_LOG_DEBUG(v << "を未訪問リストに追加。");
                 visited.insert(v);
                 q.push(std::make_pair(v, dist + 1));
             }
@@ -3546,243 +3566,7 @@ RoutingProtocol::TunnelForward(Ptr<const Packet> pkt, Ipv4Address myaddr)
 
     NS_LOG_DEBUG("WHノード：" << myaddr << "が出口側のWHノード：" << m_whPeerIp << "に" << IdentifyAodvType(pkt) << "を送信");
 
-    // //------------------------------------------------------
-    // // WHソケットを定義した場合の処理
-    // //------------------------------------------------------
-    // if (!m_isWhNode)
-    //     return;
-
-    // Ptr<Packet> inner = pkt->Copy();
-
-    // WhForwardTag tag;
-    // tag.Set(true);
-    // inner->AddPacketTag(tag);
-
-    // InetSocketAddress remote = InetSocketAddress(m_whPeerIp, m_whPort);
-
-    // m_whSocket->SendTo(inner, 0, remote);
-
-    // NS_LOG_DEBUG("[WH] TunnelForward: sent to " << m_whPeerIp);
-
 }
-
-//RecvAODV用
-// void
-// RoutingProtocol::WhTunnelRecv(Ptr<Socket> socket)
-// {
-//     Address from;
-//     Ptr<Packet> outer = socket->RecvFrom(from);
-
-//     NS_LOG_DEBUG("[WH] Tunnel packet received");
-
-//     Ptr<Packet> inner = outer->Copy();
-
-//     // inner は 完全な IPv4 パケット
-//     Ipv4Header ip;
-//     if (!inner->PeekHeader(ip))
-//     {
-//         NS_LOG_ERROR("[WH] No inner IPv4 header");
-//         return;
-//     }
-
-//     WhForwardTag tag;
-//     if (inner->PeekPacketTag(tag) && tag.Get())
-//     {
-//         NS_LOG_UNCOND("[WH-REBCAST-RECV] Node "
-//                     << m_ipv4->GetObject<Node>()->GetId()
-//                     << " received WH inner packet from tunnel");
-//     }
-
-//     if (ip.GetProtocol() == UdpL4Protocol::PROT_NUMBER)
-// {
-//     // inner は AODVパケット
-
-//     // inner のコピーを作る
-//     Ptr<Packet> aodvPkt = inner->Copy();
-
-//     // AODV TypeHeader を読み出す
-//     TypeHeader tHeader;
-//     aodvPkt->RemoveHeader(tHeader);
-
-//     if (tHeader.Get() == AODVTYPE_RREQ)
-//     {
-//         RreqHeader rreq;
-//         aodvPkt->RemoveHeader(rreq);
-
-//         // ★ フラグを設定
-//         rreq.SetWHForwardFlag(1);
-
-//         // ヘッダを戻す
-//         aodvPkt->AddHeader(rreq);
-//         aodvPkt->AddHeader(tHeader);
-
-//         // 再ブロードキャスト
-//         for (auto &entry : m_socketSubnetBroadcastAddresses)
-//         {
-//             Ptr<Socket> bcastSocket = entry.first;
-//             bcastSocket->SendTo(aodvPkt, 0,
-//                 InetSocketAddress(Ipv4Address("255.255.255.255"), 0));
-            
-//                 NS_LOG_DEBUG("再ブロードキャスト完了");
-//         }
-
-//     }
-//     else if (tHeader.Get() == AODVTYPE_RREP)
-//     {
-//         RrepHeader rrep;
-//         aodvPkt->RemoveHeader(rrep);
-
-//         // ★ フラグを設定
-//         rrep.SetWHForwardFlag(1);
-
-//         // ヘッダを戻す
-//         aodvPkt->AddHeader(rrep);
-//         aodvPkt->AddHeader(tHeader);
-
-//         // 再ブロードキャスト
-//         for (auto &entry : m_socketSubnetBroadcastAddresses)
-//         {
-//             Ptr<Socket> bcastSocket = entry.first;
-//             bcastSocket->SendTo(aodvPkt, 0,
-//                 InetSocketAddress(Ipv4Address("255.255.255.255"), 0));
-            
-//                 NS_LOG_DEBUG("再ブロードキャスト完了");
-//         }
-
-                            
-//     }
-// }
-
-//     // // 再ブロードキャスト
-    // for (auto &entry : m_socketSubnetBroadcastAddresses)
-    // {
-    //     Ptr<Socket> bcastSocket = entry.first;
-    //     bcastSocket->SendTo(inner->Copy(), 0,
-    //         InetSocketAddress(Ipv4Address("255.255.255.255"), 0));
-        
-    //         NS_LOG_DEBUG("再ブロードキャスト完了");
-    // }
-
-//     // 自ノードへ正常配達
-//     // uint32_t iface = m_ipv4->GetInterfaceForAddress(ip.GetDestination());
-//     // m_ipv4->Receive(inner, Ipv4L3Protocol::PROT_NUMBER, iface);
-// }
-
-// void
-// RoutingProtocol::WhTunnelRecv(Ptr<Socket> socket)
-// {
-//     Address from;
-//     Ptr<Packet> outer = socket->RecvFrom(from);
-
-//     NS_LOG_DEBUG("[WH] Tunnel packet received");
-
-//     // inner = 完全な IPv4 パケット (入口側からそのまま送られてきたやつ)
-//     Ptr<Packet> inner = outer->Copy();
-
-//     Ipv4Header ip;
-//     if (!inner->RemoveHeader(ip))   // ★ Peek ではなく Remove する
-//     {
-//         NS_LOG_ERROR("[WH] No inner IPv4 header");
-//         return;
-//     }
-
-//     // UDP 以外は今回は無視（必要なら ICMP 等はここで別処理）
-//     if (ip.GetProtocol() != UdpL4Protocol::PROT_NUMBER)
-//     {
-//         NS_LOG_DEBUG("[WH] Inner is not UDP, skip AODV processing");
-//         return;
-//     }
-
-//     UdpHeader udp;
-//     inner->RemoveHeader(udp);       // ★ inner = [TypeHeader][RREQ/RREP]
-
-//     if (udp.GetDestinationPort() != AODV_PORT)
-//     {
-//         NS_LOG_DEBUG("[WH] Inner UDP dst port is not AODV_PORT, skip");
-//         return;
-//     }
-
-//     // ---- ここからが本当の AODV ペイロード ----
-//     Ptr<Packet> aodvPkt = inner->Copy();
-
-//     TypeHeader tHeader;
-//     aodvPkt->RemoveHeader(tHeader);
-
-//     if (!tHeader.IsValid())
-//     {
-//         NS_LOG_WARN("[WH] Invalid AODV TypeHeader in inner packet");
-//         return;
-//     }
-
-//     // ブロードキャスト用ソケットを1つ取る
-//     Ptr<Socket> bcastSocket = nullptr;
-//     for (auto &entry : m_socketSubnetBroadcastAddresses)
-//     {
-//         bcastSocket = entry.first;
-//         break;
-//     }
-//     if (!bcastSocket)
-//     {
-//         NS_LOG_ERROR("[WH] No broadcast socket found");
-//         return;
-//     }
-
-//     if (tHeader.Get() == AODVTYPE_RREQ)
-//     {
-//         RreqHeader rreq;
-//         aodvPkt->RemoveHeader(rreq);
-
-//         // ★ WHフラグをセット
-//         rreq.SetWHForwardFlag(1);
-
-//         // ヘッダを戻す（逆順）
-//         aodvPkt->AddHeader(rreq);
-//         aodvPkt->AddHeader(tHeader);
-
-//         bool oldBlock = m_sendBlocked;
-//         m_sendBlocked = false;  // 送信ブロックを解除しておく
-
-//         // AODVソケットから再ブロードキャスト
-//         bcastSocket->SendTo(aodvPkt,
-//                             0,
-//                             InetSocketAddress(Ipv4Address("255.255.255.255"),
-//                                               AODV_PORT));   // ★ ポートは AODV_PORT！
-        
-//         m_sendBlocked = oldBlock;
-
-//         NS_LOG_DEBUG("[WH] Rebroadcasted RREQ with WHFlag=" << rreq.GetWHForwardFlag()
-//                      << "メッセージID：" << rreq.GetId());
-//     }
-//     else if (tHeader.Get() == AODVTYPE_RREP)
-//     {
-//         RrepHeader rrep;
-//         aodvPkt->RemoveHeader(rrep);
-
-//         rrep.SetWHForwardFlag(1);
-
-//         // AODV ペイロードだけを整える
-//         aodvPkt->AddHeader(rrep);
-//         aodvPkt->AddHeader(tHeader);
-
-//         bool oldBlock = m_sendBlocked;
-
-//         m_sendBlocked = false;  // 送信ブロックを解除しておく
-
-//         // ★ UDP/IP は bcastSocket が勝手に付けるので、ここでは付けない
-//         bcastSocket->SendTo(aodvPkt,
-//                             0,
-//                             InetSocketAddress(Ipv4Address("255.255.255.255"),
-//                                             AODV_PORT));
-
-//         m_sendBlocked = oldBlock;
-
-//         NS_LOG_DEBUG("[WH] Rebroadcasted RREP with WHFlag=" << rrep.GetWHForwardFlag());
-//     }
-
-//     // （必要なら）自ノードにも inner を配達したい場合は、
-//     // uint32_t iface = m_ipv4->GetInterfaceForAddress(ip.GetDestination());
-//     // m_ipv4->Receive(innerOriginal, Ipv4L3Protocol::PROT_NUMBER, iface);
-// }
 
 void
 RoutingProtocol::WhTunnelRecv(Ptr<Socket> socket)
@@ -4262,6 +4046,25 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
     {
         NS_LOG_DEBUG("判定対象ノード：" << receiver << "が送信元：" << src <<"からステップ３の依頼を受信しました。");
     }
+
+    //ルーチングテーブル作成
+    RoutingTableEntry toA;
+    if(!m_routingTable.LookupRoute(vsh.GetOrigin(), toA))
+    {
+        //ルーチングテーブルに存在しない場合、新規作成
+        Ptr<NetDevice> dev = m_ipv4->GetNetDevice(m_ipv4->GetInterfaceForAddress(receiver));
+        RoutingTableEntry newEntry(
+            /*dev=*/dev,
+            /*dst=*/vsh.GetOrigin(),
+            /*vSeqNo=*/true,
+            /*seqNo=*/1,
+            /*iface=*/m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0),
+            /*hops=*/1,
+            /*nextHop=*/vsh.GetOrigin(),
+            /*lifetime=*/Time(m_allowedHelloLoss * m_helloInterval),
+            /*隣接ノードの隣接ノード数*/0);
+        m_routingTable.AddRoute(newEntry);
+    }
     
     // -------------------------------
     // (1) 判定対象ノード B の場合
@@ -4289,11 +4092,14 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
         const auto &neighborsB = itB->second;
 
         auto itA = m_localGraph.find(A);
+        std::set<Ipv4Address> neighborsA;
         if (itA == m_localGraph.end())
         {
             NS_LOG_WARN("[Step3] A の隣接ノードリストが存在しません: " << A);
+            
+        }else{
+            neighborsA = itA->second;
         }
-        const auto &neighborsA = itA->second;
 
         // B の排他的隣接ノード = neighborsB - neighborsA
         std::set<Ipv4Address> exNeighborsB;
@@ -4444,7 +4250,24 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
         return;
     }
 
-    
+    //ルーチングテーブル確認
+    RoutingTableEntry toA;
+    if(!m_routingTable.LookupRoute(auth.GetOrigin(), toA))
+    {
+        //ルーチングテーブルに存在しない場合、新規作成
+        Ptr<NetDevice> dev = m_ipv4->GetNetDevice(m_ipv4->GetInterfaceForAddress(receiver));
+        RoutingTableEntry newEntry(
+            /*dev=*/dev,
+            /*dst=*/auth.GetOrigin(),
+            /*vSeqNo=*/true,
+            /*seqNo=*/1,
+            /*iface=*/m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(receiver), 0),
+            /*hops=*/1,
+            /*nextHop=*/auth.GetOrigin(),
+            /*lifetime=*/Time(m_allowedHelloLoss * m_helloInterval),
+            /*隣接ノードの隣接ノード数*/0);
+        m_routingTable.AddRoute(newEntry);
+    }
 
     NS_LOG_DEBUG("判定対象ノード：" << receiver << "が判定開始ノード："<< sender << "からの認証メッセージを受信しました。");
 
@@ -4605,6 +4428,18 @@ RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadc
 
     NS_LOG_DEBUG("[Step3] A=" << A << " B=" << B << " witnessSum=" << s);
 
+    if(entry.recv_node.empty())
+    {
+        NS_LOG_DEBUG("すべてのノードがB(" << B << ")　からの認証応答メッセージを受信していません。");
+        return;
+    }else{
+
+        for (const auto& addr : entry.recv_node)
+        {
+            NS_LOG_DEBUG("結果メッセージを受信したノード " << addr);
+        }
+    }
+
     if (s >= 1) {
         NS_LOG_INFO("[Step3] 最終判定：内部WHなし (返信なしだが witness >= 1)");
 
@@ -4612,9 +4447,11 @@ RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadc
           || A == Ipv4Address("10.1.2.1")
           || A == Ipv4Address("10.1.2.2"))
         {
+            NS_LOG_DEBUG("タグによりWHノードを正常ノードとご判定");
             //WH攻撃を正常ノードとご検知
             m_whStats.undetectedWh++;
         }else{
+            
             //正常ノードを正常に判定
             m_whStats.truenegative++;
         }
@@ -4730,11 +4567,15 @@ RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addres
                   << " から結果を受信 tag=" << int(tag));
 
     entry.s += tag;
+    entry.recv_result = true;
+    entry.recv_node.insert(hdr.GetWitness());
 
     //------------------------------------------------------------------
     // (3) この witness は回答済みとして awaited から削除
     //------------------------------------------------------------------
     entry.awaited.insert(witness);
+
+    m_step3ResultTable[origin][target] = entry;
 
     return;
 }
@@ -5407,7 +5248,7 @@ RoutingProtocol::SendHello()
      */
 
     //隣接ノード数を取得
-    uint32_t neigborCount ;
+    uint32_t neigborCount =0;
 
     NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal());
     
@@ -5432,6 +5273,7 @@ RoutingProtocol::SendHello()
     uint32_t avNeighborCount = 0;
     if(totalNeighborCount > 0)
     {
+        //隣接ノードの平均隣接ノード数
         avNeighborCount = static_cast<double>(totalNeighborCount) / neigborCount;
         NS_LOG_DEBUG("総隣接ノード数：" << totalNeighborCount);
     }else{
@@ -5448,7 +5290,6 @@ RoutingProtocol::SendHello()
     }
 
     NS_LOG_DEBUG("隣接ノード比率: " << neighborRatio);
-    
 
     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
     {

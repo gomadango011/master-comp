@@ -417,8 +417,11 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     {
         int s = 0;  // 和を蓄積
         std::set<Ipv4Address> awaited;  // まだ結果が来ていない witness
+        std::set<Ipv4Address> recv_node; //結果メッセージを受信したノード
         EventId timeoutEvent;           // Case3 タイムアウトイベント
         bool replyReceived = false;     // AUTHREP を受信したか？
+
+        bool recv_result = false;       //共通隣接ノードから結果を受信したか
 
         bool isRebroadcasted = false;  //判定対象ノードがWH攻撃の影響下か
     };

@@ -231,15 +231,7 @@ int main(int argc, char** argv)
 
     test.Run();
 
-    AnimationInterface* anim = new AnimationInterface("anim.xml");
-
-    Simulator::Run();
-
-    Simulator::Destroy();
-
-    // delete anim;
-   
-    test.Report(std::cout);
+    // AnimationInterface* anim = new AnimationInterface("anim.xml");
 
     return 0;
 }
@@ -300,14 +292,6 @@ AodvExample::Configure(int argc, char** argv)
 void
 AodvExample::Run()
 {
-    //  Config::SetDefault ("ns3::WifiRemoteStationManager::RtsCtsThreshold", UintegerValue (1)); //
-    //  enable rts cts all the time.
-    //RREPのログを取得
-    if(RREP_log == 1)
-    {
-        std::ofstream ofs3("p-log/RREP_log.txt", std::ios::trunc);  // truncで既存の内容を削除
-    }
-
     CreateNodes();
     CreateDevices();
     InstallInternetStack();
@@ -318,12 +302,83 @@ AodvExample::Run()
     
 
     Simulator::Stop(Seconds(totalTime));
+    Simulator::Run();
+    Report(std::cout);
+    Simulator::Destroy();
 
 }
 
 void
-AodvExample::Report(std::ostream&)
+AodvExample::Report(std::ostream& os)
 {
+    // ★ 出力ファイルを開く（追記 or 上書き）
+    std::ofstream fout("aodv_result.log", std::ios::out);
+
+    auto write = [&](auto const &msg) {
+        os   << msg << std::endl;   // 標準出力
+        fout << msg << std::endl;   // ファイル出力
+    };
+
+    write("==================== AODV PERFORMANCE REPORT ====================");
+
+    uint32_t totalTP = 0, totalFN = 0, totalFP = 0, totalTN = 0, totalNA = 0;
+    uint64_t totalBytes = 0;
+    std::vector<double> latencies;
+
+    for (uint32_t i = 0; i < nodes.GetN(); i++)
+    {
+        Ptr<Ipv4> ipv4 = nodes.Get(i)->GetObject<Ipv4>();
+        Ptr<Ipv4RoutingProtocol> rp = ipv4->GetRoutingProtocol();
+        Ptr<aodv::RoutingProtocol> aodv = DynamicCast<aodv::RoutingProtocol>(rp);
+        if (!aodv) continue;
+
+        auto stats = aodv->Getevaluation();
+
+        totalTP += stats.detectedWh;
+        totalFN += stats.undetectedWh;
+        totalFP += stats.falsePositive;
+        totalTN += stats.truenegative;
+        totalNA += stats.notApplicable;
+        totalBytes += stats.totalAodvCtrlBytes;
+
+        for (const auto &kv : stats.m_latencyTable)
+        {
+            const auto &entry = kv.second;
+            if (entry.latency.GetSeconds() > 0)
+                latencies.push_back(entry.latency.GetSeconds());
+        }
+    }
+
+    double detectionRate = (totalTP + totalFN > 0)
+                           ? (double)totalTP / (totalTP + totalFN)
+                           : 0.0;
+
+    double falsePositiveRate = (totalFP + totalTN > 0)
+                               ? (double)totalFP / (totalFP + totalTN)
+                               : 0.0;
+
+    double avgLatency = 0.0;
+    if (!latencies.empty()) {
+        double sum = 0;
+        for (double v : latencies) sum += v;
+        avgLatency = sum / latencies.size();
+    }
+
+    write("WH Detection Rate        : " + std::to_string(detectionRate));
+    write("False Positive Rate      : " + std::to_string(falsePositiveRate));
+    write("Average Route Latency    : " + std::to_string(avgLatency) + " sec");
+    write("");
+    write("--- Detail Stats ---");
+    write("TP  : " + std::to_string(totalTP));
+    write("FN  : " + std::to_string(totalFN));
+    write("FP  : " + std::to_string(totalFP));
+    write("TN  : " + std::to_string(totalTN));
+    write("NA  : " + std::to_string(totalNA));
+    write("Detection Bytes : " + std::to_string(totalBytes) + " bytes");
+
+    write("===============================================================");
+
+    fout.close();
 }
 
 void
@@ -341,7 +396,11 @@ AodvExample::CreateNodes()
     }
 
     for (uint32_t i = 0; i < size; ++i) {
-        if(i == 0 || i == size - 1 || i == 1 || i == 2) {
+        if(i == 0 || i == size - 1 
+            || i == 1 || i == 2 //WHノード
+            || i == 3 || i == 4 //送受信ノード
+            || i == 5 || i == 6 //送受信ノード
+            ) {
            // 固定ノードとして追加
             fixedNodes.Add(nodes.Get(i));
         }
@@ -387,8 +446,16 @@ AodvExample::CreateNodes()
     // 固定ノードの位置を設定
     Ptr<ListPositionAllocator> positionAlloc = CreateObject<ListPositionAllocator>();
     positionAlloc->Add(Vector(0, 400, 0));  //送信者の位置情報　ID=0
-    positionAlloc->Add(Vector(end_distance - WH_size - 110, 400, 0));  //WH1の位置情報
-    positionAlloc->Add(Vector(end_distance - 110, 400, 0));  //WH2の位置情報
+
+    positionAlloc->Add(Vector(end_distance - WH_size - 110, 400, 0));  //WH1の位置情報　ID:1
+    positionAlloc->Add(Vector(end_distance - 110, 400, 0));  //WH2の位置情報            ID:2
+
+    positionAlloc->Add(Vector(0, 500, 0));  //送信ノード２            ID:3
+    positionAlloc->Add(Vector(end_distance, 300, 0));  //受信ノード2         ID:4
+
+    positionAlloc->Add(Vector(0, 300, 0));  //送信ノード３           ID:5
+    positionAlloc->Add(Vector(end_distance, 500, 0));  //受信者ノード3  ID:6
+    
     positionAlloc->Add(Vector(end_distance, 400, 0));  //受信者の位置情報  ID=size-1
 
     fixedMobility.SetPositionAllocator(positionAlloc);
@@ -397,60 +464,9 @@ AodvExample::CreateNodes()
 
     fixedMobility.Install (fixedNodes);
 
-    // for (uint32_t i = 0; i < nodes.GetN(); ++i)
-    // {
-    //     Ptr<Node> node = nodes.Get(i);
-    //     Ptr<MobilityModel> mobility = node->GetObject<MobilityModel>();
-
-    //     if (node && mobility)
-    //     {
-    //         Vector pos = mobility->GetPosition();
-    //         anim.UpdatePosition(node, pos);  // ★これがないとクラッシュ
-    //     }
-    // }
-
-    // Ptr<MobilityModel> sender = nodes.Get(0)->GetObject<MobilityModel>();
-    // Ptr<MobilityModel> receiver = nodes.Get(size - 1)->GetObject<MobilityModel>();
-    // Ptr<MobilityModel> WH1 = nodes.Get(1)->GetObject<MobilityModel>();
-    // Ptr<MobilityModel> WH2 = nodes.Get(2)->GetObject<MobilityModel>();
-
-    // sender->SetPosition(Vector(0, 400, 0)); //送信者の位置を設定
-    // receiver->SetPosition(Vector(end_distance, 400, 0)); //受信者の位置を設定
-    // WH1->SetPosition(Vector(end_distance - WH_size - 110, 400, 0)); //WH1の位置を設定
-    // WH2->SetPosition(Vector(end_distance - 110, 400, 0)); //WH2の位置を設定
-
-    //AnimationInterface anim ("wormhole.xml"); // Mandatory
-    // AnimationInterface::SetConstantPosition (nodes.Get (0), 0, 400); //送信者
-    // AnimationInterface::SetConstantPosition (nodes.Get (size - 1), end_distance, 400); //受信者
-
-    // AnimationInterface::SetConstantPosition (nodes.Get (1), end_distance -WH_size - 110 , 400); //WH1
-    // AnimationInterface::SetConstantPosition (nodes.Get (2), end_distance - 110, 400); //WH2
-
-    // //2つ目の経路作成ノード
-    // AnimationInterface::SetConstantPosition (nodes.Get (3), 0, 125); //送信者
-    // AnimationInterface::SetConstantPosition (nodes.Get (size -2), 500, 375); //受信者
-
-    // //3つ目の経路作成ノード
-    // AnimationInterface::SetConstantPosition (nodes.Get (4), 0, 375); //送信者
-    // AnimationInterface::SetConstantPosition (nodes.Get (size -3), 500, 125); //受信者
-
     // WHノードをノードコンテナに追加
     malicious.Add(nodes.Get(1)); //WH1
     malicious.Add(nodes.Get(2));//WH2
-
-    //anim.EnablePacketMetadata(true);
-
-    // mobility.Install(nodes);
-
-    // mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
-    //                          "Bounds", RectangleValue (Rectangle (-50, 50, -50, 50)));
-    // mobility.Install (nodes);
-
-    // NetAnim ビジュアライザー設定
-    // AnimationInterface anim("anim.xml");
-
-    // // ビジュアライザーのスクリーンショット設定
-    // Config::Set("/Visualizer/KeyPressEvent/Capture", BooleanValue(true));
 
 }
 
@@ -505,13 +521,10 @@ AodvExample::InstallInternetStack()
     AodvHelper aodv;
     // you can configure AODV attributes here using aodv.Set(name, value)
 
-    aodv.Set("DestinationOnly", BooleanValue(true));
-    //WHリンクの長さを設定
-    aodv.Set("WHLinkLength", UintegerValue(WH_size));
-    //検知待機時間を設定
-    aodv.Set("WaitTime", TimeValue(Seconds(wait_time)));
+    aodv.Set("DestinationOnly", BooleanValue(false));
     //エンド間の距離を設定
     aodv.Set("EndDistance", UintegerValue(end_distance));
+    aodv.Set("WhMode", UintegerValue(2));  // 0 = 通常ノードのみ、1 = 提案手法のWH攻撃、2 = 既存手法のWH攻撃、3 = 外部WH攻撃
 
     InternetStackHelper stack;
     stack.SetRoutingHelper(aodv); // has effect on the next Install ()
@@ -530,53 +543,71 @@ AodvExample::InstallInternetStack()
         Ipv4RoutingHelper::PrintRoutingTableAllAt(Seconds(8), routingStream);
     }
 
-    //nodeにファイルの情報を追加
-    for (NodeContainer::Iterator it = nodes.Begin(); it != nodes.End(); ++it)
-    {
-       Ptr<Node> node = *it;
-       //ipv4 = node->GetObject<Ipv4>();
-       node->Setfile(absPath);
+     // ---- 相手 WH ノードの P2P IP を設定 ----
+    // mal_ifcont に割り当てた P2P のアドレス
+    Ipv4Address wh1P2P = mal_ifcont.GetAddress(0); // 10.1.2.1
+    Ipv4Address wh2P2P = mal_ifcont.GetAddress(1); // 10.1.2.2
 
-       std::cout << node->Getfile() << std::endl;
-    }
+    NS_LOG_UNCOND("WH node 1 IP=" << wh1P2P);
+    NS_LOG_UNCOND("WH node 2 IP=" << wh2P2P);
+
+    // ===============================
+    // ① WH攻撃ノードの設定
+    // ===============================
+    // 攻撃者ノード
+    Ptr<Node> wh1 = malicious.Get(0);
+    Ptr<Node> wh2 = malicious.Get(1);
+
+    // ---- WH1 の AODV を取得 ----
+    Ptr<Ipv4> ipv4_1 = wh1->GetObject<Ipv4>();
+    Ptr<Ipv4RoutingProtocol> rp1 = ipv4_1->GetRoutingProtocol();
+    Ptr<aodv::RoutingProtocol> aodv1 = DynamicCast<aodv::RoutingProtocol>(rp1);
+
+    // ---- WH2 の AODV を取得 ----
+    Ptr<Ipv4> ipv4_2 = wh2->GetObject<Ipv4>();
+    Ptr<Ipv4RoutingProtocol> rp2 = ipv4_2->GetRoutingProtocol();
+    Ptr<aodv::RoutingProtocol> aodv2 = DynamicCast<aodv::RoutingProtocol>(rp2);
+
+    // ---- 攻撃者フラグの設定 ----
+    aodv1->SetIsWhNode(true);
+    aodv2->SetIsWhNode(true);
+
+    aodv1->SetWhPeer(wh2P2P); // WH1の相方は WH2
+    aodv2->SetWhPeer(wh1P2P); // WH2の相方は WH1
 }
 
 void
 AodvExample::InstallApplications()
 {
-    //1つ目の送信元ノード
-    PingHelper ping_250(interfaces.GetAddress(size - 1));
-    ping_250.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
+    // ================================
+    // 1つ目の送信ノード（ID = 0 → 受信者 ID = size - 1）
+    // ================================
+    Ipv4Address dst1 = interfaces.GetAddress(size - 1); // 受信者
+    PingHelper ping1(dst1);
+    ping1.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
+    ApplicationContainer app1 = ping1.Install(nodes.Get(0));  // 送信者
+    app1.Start(Seconds(0));
+    app1.Stop(Seconds(totalTime) - Seconds(0.001));
 
-    ApplicationContainer p = ping_250.Install(nodes.Get(0));
 
-    // //2つ目の送信元ノード
-    // PingHelper ping_125(interfaces.GetAddress(size - 2));
-    // ping_125.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
+    // ================================
+    // 2つ目の送信ノード（ID = 3 → 受信者 ID = 4）
+    // ================================
+    Ipv4Address dst2 = interfaces.GetAddress(4);
+    PingHelper ping2(dst2);
+    ping2.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
+    ApplicationContainer app2 = ping2.Install(nodes.Get(3));  // 送信者
+    app2.Start(Seconds(0));
+    app2.Stop(Seconds(totalTime) - Seconds(0.001));
 
-    // ApplicationContainer p2 = ping_125.Install(nodes.Get(3));
 
-    // //3つ目の送信元ノード
-    // PingHelper ping_375(interfaces.GetAddress(size - 3));
-    // ping_375.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
-
-    // ApplicationContainer p3 = ping_375.Install(nodes.Get(4));
-    
-
-    //それぞれの送信元ノードがpingをスタート
-    p.Start(Seconds(0));
-    p.Stop(Seconds(totalTime) - Seconds(0.001));
-
-    // p2.Start(Seconds(0));
-    // p2.Stop(Seconds(totalTime) - Seconds(0.001));
-    // p3.Start(Seconds(0));
-    // p3.Stop(Seconds(totalTime) - Seconds(0.001));
-
-    // move node away
-    // Ptr<Node> node = nodes.Get(size / 2);
-    // Ptr<MobilityModel> mob = node->GetObject<MobilityModel>();
-    // Simulator::Schedule(Seconds(totalTime / 3),
-    //                     &MobilityModel::SetPosition,
-    //                     mob,
-    //                     Vector(1e5, 1e5, 1e5));
+    // ================================
+    // 3つ目の送信ノード（ID = 5 → 受信者 ID = 6）
+    // ================================
+    Ipv4Address dst3 = interfaces.GetAddress(6);
+    PingHelper ping3(dst3);
+    ping3.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
+    ApplicationContainer app3 = ping3.Install(nodes.Get(5));  // 送信者
+    app3.Start(Seconds(0));
+    app3.Stop(Seconds(totalTime) - Seconds(0.001));
 }
