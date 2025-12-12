@@ -352,7 +352,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     uint16_t m_rerrCount;
 
     //隣接ノード比率のしきい値
-    float m_whNeighborThreshold;
+    double m_whNeighborThreshold;
 
     //別経路要求メッセージを受信した際に、ID、送信元ノード、排他的隣接ノード、排他的隣接ノードが4ホップいないかを保持するための構造体
     struct DetectionReqEntry

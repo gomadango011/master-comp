@@ -169,7 +169,7 @@ RoutingProtocol::RoutingProtocol()
       m_nb(m_helloInterval),
       m_rreqCount(0),
       m_rerrCount(0),
-      m_whNeighborThreshold(1.2), //隣接ノード比率のしきい値を初期化
+      m_whNeighborThreshold(1), //隣接ノード比率のしきい値を初期化
       m_sendBlocked(false),
       m_step3ReplyWaitTime(8*m_nodeTraversalTime),
       m_isWhNode(false),          // WH ノードフラグを初期化
@@ -1423,7 +1423,9 @@ RoutingProtocol::SendTo(Ptr<Socket> socket, Ptr<Packet> packet, Ipv4Address dest
         if (type == AODVTYPE_AUTH ||
             type == AODVTYPE_AUTHREP ||
             type == AODVTYPE_VSR ||
-            type == AODVTYPE_STEP3RESULT)
+            type == AODVTYPE_STEP3RESULT ||
+            type == AODVTYPE_RREP
+        )
         {
             forceSend = true;
             NS_LOG_DEBUG("ステップ3のメッセージの場合、送信を許可する");
@@ -2784,6 +2786,7 @@ RoutingProtocol::RecvReplyAck(Ptr<Packet> p, Ipv4Address neighbor, bool fromWh)
     
 // }
 
+// NS_LOG_COMPONENT_DEFINE("AodvHello");
 void
 RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool isRebroadcasted)
 {
@@ -2799,6 +2802,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
     NS_LOG_DEBUG("Helloメッセージを " << receiver << " が " << rrepHeader.GetDst() << " から受信" << rrepHeader.GetNeighborCount());
 
     double rB = rrepHeader.GetNeighborRatio();
+    NS_LOG_DEBUG("Helloメッセージを受信したときの値 隣接ノード比率：" << rB << "隣接ノード数：" << rrepHeader.GetNeighborCount());
 
     //helloメッセージを処理
     RoutingTableEntry toNeighbor;
@@ -2904,6 +2908,12 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         m_localGraph[receiver].insert(helloSender);
     }
 
+    if (Simulator::Now() < Seconds(5.0))
+    {
+        NS_LOG_DEBUG("シュミレーション時間が2秒未満です。" << Simulator::Now());
+        return;
+    }
+
     if(rB == 0)
     {
         NS_LOG_DEBUG("判定対象ノードの隣接ノード比率が0のため、検知対象にしません。");
@@ -2911,6 +2921,14 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
     }
 
     NS_LOG_DEBUG("ステップ2検知開始");
+
+    if(isRebroadcasted
+                    || receiver == Ipv4Address("10.1.2.1")
+                    || receiver == Ipv4Address("10.1.2.2")
+          )
+        {
+            NS_LOG_DEBUG("WHリンクの隣接ノード比率：" << rB);
+        }
 
     //受信したhelloパケットの隣接ノード比率が閾値を上回る場合、WH攻撃検知を開始
     if(rB > m_whNeighborThreshold)
@@ -2943,13 +2961,6 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
 
                 commonNeighbors.insert(n);
             }
-        }
-        if(isRebroadcasted
-                    || receiver == Ipv4Address("10.1.2.1")
-                    || receiver == Ipv4Address("10.1.2.2")
-          )
-        {
-            NS_LOG_DEBUG("WHリンクの隣接ノード比率：" << rB);
         }
 
         // 排他的隣接ノード数が１以下の場合、例外処理を実行
@@ -3079,7 +3090,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         
         if(isRebroadcasted || receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.1"))
         {
-            NS_LOG_DEBUG("WHリンクを正常リンクとご検知");
+            NS_LOG_DEBUG("WHリンクを正常リンクとご判定");
             m_whStats.undetectedWh ++;
         }else{
             m_whStats.truenegative++;
@@ -3088,6 +3099,8 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
 
     return;
 }
+
+// NS_LOG_COMPONENT_DEFINE("AodvRoutingProtocol");
 
 // //内部WH攻撃 helloメッセージ転送のための再帰的呼び出し
 // void
@@ -3208,17 +3221,17 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,
 {
     NS_LOG_FUNCTION(this);
 
-     // 自身が送信停止中なら retry 関数へ
-    if (m_sendBlocked)
-    {
-        NS_LOG_DEBUG("[Step3] 送信停止中のため StartStep3Detection を延期");
+    //  // 自身が送信停止中なら retry 関数へ
+    // if (m_sendBlocked)
+    // {
+    //     NS_LOG_DEBUG("[Step3] 送信停止中のため StartStep3Detection を延期");
         
-        Simulator::Schedule(Seconds(0.05),
-                            &RoutingProtocol::StartStep3DetectionRetry,
-                            this, startnode, target, NA, NB, commonNeighbors, isRebroadcasted);
+    //     Simulator::Schedule(Seconds(0.05),
+    //                         &RoutingProtocol::StartStep3DetectionRetry,
+    //                         this, startnode, target, NA, NB, commonNeighbors, isRebroadcasted);
 
-        return;
-    }
+    //     return;
+    // }
 
     NS_LOG_INFO("=== Step3 Detection Start ===");
     NS_LOG_INFO("判定開始ノード(A): " << startnode
@@ -3296,16 +3309,16 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,
     {
         if (commonNeighbors.count(n) == 0) {
 
-            //ステップ3処理中に送信停止になった場合
-            if(m_sendBlocked)
-            {
-                NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
-                Simulator::Schedule(Seconds(0.05),
-                                    &RoutingProtocol::StartStep3DetectionRetry,
-                                    this, startnode, target, NA, NB, commonNeighbors, isRebroadcasted);
+            // //ステップ3処理中に送信停止になった場合
+            // if(m_sendBlocked)
+            // {
+            //     NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
+            //     Simulator::Schedule(Seconds(0.05),
+            //                         &RoutingProtocol::StartStep3DetectionRetry,
+            //                         this, startnode, target, NA, NB, commonNeighbors, isRebroadcasted);
 
-                return;
-            }
+            //     return;
+            // }
 
             //判定対象ノードにメッセージを送信する場合
             if(n == target)
@@ -3322,16 +3335,16 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,
             SendVs(n, startnode, target, 0);  // ← 非共通ノードだけ
             continue;
         }else{
-            //ステップ3処理中に送信停止になった場合
-            if(m_sendBlocked)
-            {
-                NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
-                Simulator::Schedule(Seconds(0.05),
-                                    &RoutingProtocol::StartStep3DetectionRetry,
-                                    this, startnode, target, NA, NB, commonNeighbors, isRebroadcasted);
+            // //ステップ3処理中に送信停止になった場合
+            // if(m_sendBlocked)
+            // {
+            //     NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
+            //     Simulator::Schedule(Seconds(0.05),
+            //                         &RoutingProtocol::StartStep3DetectionRetry,
+            //                         this, startnode, target, NA, NB, commonNeighbors, isRebroadcasted);
 
-                return;
-            }
+            //     return;
+            // }
             
             NS_LOG_DEBUG("判定開始ノード：" << startnode << " が共通隣接ノード：" << n << "に送信停止と監視依頼を行います。");
 
@@ -3348,16 +3361,16 @@ RoutingProtocol::StartStep3Detection(Ipv4Address startnode ,
         NS_LOG_DEBUG("ステップ3の認証メッセージの判定対象ノード：" << target << "への経路が存在しません。");
     }
 
-    //ステップ3処理中に送信停止になった場合
-    if(m_sendBlocked)
-    {
-        NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
-        Simulator::Schedule(Seconds(0.05),
-                            &RoutingProtocol::StartStep3DetectionRetry,
-                            this, startnode, target, NA, NB, commonNeighbors, isRebroadcasted);
+    // //ステップ3処理中に送信停止になった場合
+    // if(m_sendBlocked)
+    // {
+    //     NS_LOG_DEBUG("ステップ3処理中に送信停止になりました。");
+    //     Simulator::Schedule(Seconds(0.05),
+    //                         &RoutingProtocol::StartStep3DetectionRetry,
+    //                         this, startnode, target, NA, NB, commonNeighbors, isRebroadcasted);
 
-        return;
-    }
+    //     return;
+    // }
 
     //認証パケットを送信
     SendAuthPacket(startnode, target, toTarget);
@@ -3424,8 +3437,6 @@ RoutingProtocol::PromiscSniff(Ptr<NetDevice> dev,
 {
     // 自分の IP
     Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
-
-    NS_LOG_DEBUG("PromiscSniffが開始されました");
 
     Ptr<Packet> pWh    = packet->Copy();   // WH 転送判定用
     Ptr<Packet> pStep3 = packet->Copy();        // 検知用
@@ -4370,6 +4381,7 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
             ||A == Ipv4Address("10.1.2.1")
             ||A == Ipv4Address("10.1.2.2"))
         {
+            NS_LOG_DEBUG("認証応答メッセージ受信により、WHリンクをご判定");
             //WHノードを正常ノードとご検知
             m_whStats.undetectedWh++;
         }else{
@@ -5198,15 +5210,18 @@ RoutingProtocol::HelloTimerExpire()
 {
     NS_LOG_FUNCTION(this);
     Time offset;
-    if (m_lastBcastTime.IsStrictlyPositive())
-    {
-        offset = Simulator::Now() - m_lastBcastTime;
-        NS_LOG_DEBUG("Hello deferred due to last bcast at:" << m_lastBcastTime);
-    }
-    else
-    {
-        SendHello();
-    }
+    // if (m_lastBcastTime.IsStrictlyPositive())
+    // {
+    //     offset = Simulator::Now() - m_lastBcastTime;
+    //     NS_LOG_DEBUG("Hello deferred due to last bcast at:" << m_lastBcastTime);
+    // }
+    // else
+    // {
+    //     SendHello();
+    // }
+
+    //強制的にHelloメッセージを送信
+    SendHello();
     m_htimer.Cancel();
     Time diff = m_helloInterval - offset;
     m_htimer.Schedule(std::max(Seconds(0), diff));
@@ -5236,6 +5251,7 @@ RoutingProtocol::AckTimerExpire(Ipv4Address neighbor, Time blacklistTimeout)
     m_routingTable.MarkLinkAsUnidirectional(neighbor, blacklistTimeout);
 }
 
+// NS_LOG_COMPONENT_DEFINE("AodvHello");
 void
 RoutingProtocol::SendHello()
 {
@@ -5253,7 +5269,7 @@ RoutingProtocol::SendHello()
     NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal());
     
     //隣接ノード数の平均隣接ノード数と、自身の隣接ノードをリストアップ
-    uint32_t totalNeighborCount = 0;  //全隣接ノードの隣接ノード数の合計
+    double totalNeighborCount = 0;  //全隣接ノードの隣接ノード数の合計
     std::vector<Ipv4Address> neighborList; //自身の隣接ノードリスト
 
     for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
@@ -5270,7 +5286,7 @@ RoutingProtocol::SendHello()
         }
     }
 
-    uint32_t avNeighborCount = 0;
+    double avNeighborCount = 0;
     if(totalNeighborCount > 0)
     {
         //隣接ノードの平均隣接ノード数
@@ -5280,7 +5296,7 @@ RoutingProtocol::SendHello()
         NS_LOG_DEBUG("総隣接ノード数が0以下です。：" << totalNeighborCount);
     }
 
-    float neighborRatio = 0;
+    double neighborRatio = 0;
     if(avNeighborCount > 0)
     {
         neighborRatio = static_cast<double>(neigborCount) / avNeighborCount;
@@ -5335,6 +5351,8 @@ RoutingProtocol::SendHello()
         Simulator::Schedule(jitter, &RoutingProtocol::SendTo, this, socket, packet, destination);
     }
 }
+
+// NS_LOG_COMPONENT_DEFINE("AodvRoutingProtocol");
 
 void
 RoutingProtocol::SendPacketFromQueue(Ipv4Address dst, Ptr<Ipv4Route> route)

@@ -453,7 +453,7 @@ class RrepHeader : public Header
                uint32_t messageID = 0,
                uint8_t WHForwardFlag = 0,
                uint32_t NeighborCount = 0,
-               float NeighborRatio = 0.0,
+               double NeighborRatio = 0.0,
                std::vector<Ipv4Address> neighborList = std::vector<Ipv4Address>()
                );
     /**
@@ -594,12 +594,12 @@ class RrepHeader : public Header
     }
 
     //隣接ノード比率 設定・取得
-    void SetNeighborRatio(float ratio)
+    void SetNeighborRatio(double ratio)
     {
         m_NeighborRatio = ratio;
     }
 
-    float GetNeighborRatio() const
+    double GetNeighborRatio() const
     {
         return m_NeighborRatio;
     }
@@ -665,7 +665,7 @@ class RrepHeader : public Header
     uint32_t m_messageID;
     uint8_t m_WHForwardFlag; ///< 内部WH攻撃用転送フラグ
     uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
-    float m_NeighborRatio;    ///< 隣接ノード比率
+    double m_NeighborRatio;    ///< 隣接ノード比率
     std::vector<Ipv4Address> m_neighborList; ///< 隣接ノードリスト
 };
 

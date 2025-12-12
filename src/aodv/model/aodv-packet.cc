@@ -341,7 +341,7 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
                        /*メッセージID*/uint32_t messageID,
                        uint8_t WHForwardFlag,
                        uint32_t NeighborCount,
-                       float NeighborRatio,
+                       double NeighborRatio,
                        std::vector<Ipv4Address> neighborList)
     : m_flags(0),
       m_prefixSize(prefixSize),
@@ -410,7 +410,10 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     i.WriteHtonU32(m_messageID);
     i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
     i.WriteHtonU32(m_NeighborCount); // NeighborCountを4バイトとしてシリアル化する
-    i.WriteHtonU32(static_cast<uint32_t>(m_NeighborRatio * 10000)); // NeighborRatioを4バイトとしてシリアル化する
+    // ★ double → fixed-point (×10000)
+    i.WriteHtonU32(
+        static_cast<uint32_t>(m_NeighborRatio * 10000.0)
+    );
 
     //隣接ノードリストのサイズ分書き込む
     for (auto addr : m_neighborList)
@@ -438,7 +441,9 @@ RrepHeader::Deserialize(Buffer::Iterator start)
     m_messageID = i.ReadNtohU32();
     m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
     m_NeighborCount = i.ReadNtohU32(); // NeighborCountを4バイトとしてデシリアル化する
-    m_NeighborRatio = static_cast<float>(i.ReadNtohU32()) / 10000.0f; // NeighborRatioを4バイトとしてデシリアル化する
+    // ★ uint32 → double
+    m_NeighborRatio =
+        static_cast<double>(i.ReadNtohU32()) / 10000.0;
 
     //隣接ノード比率がしきい値以上の場合、隣接ノードリストを読み込む
     m_neighborList.clear();

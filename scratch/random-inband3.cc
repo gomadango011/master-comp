@@ -166,7 +166,7 @@ AodvExample::Configure(int argc, char** argv)
     // LogComponentEnable("AodvRoutingProtocol", LOG_LEVEL_ALL);
 
     std::random_device randomseed;
-    int rand = randomseed();
+    // int rand = randomseed();
 
     SeedManager::SetSeed(1);
 
