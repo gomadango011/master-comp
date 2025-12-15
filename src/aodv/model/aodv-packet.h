@@ -901,7 +901,8 @@ class AuthPacketHeader : public Header
 {
 public:
     AuthPacketHeader(Ipv4Address origin = Ipv4Address(),
-                     Ipv4Address target = Ipv4Address()
+                     Ipv4Address target = Ipv4Address(),
+                     u_int32_t id = 0
                     );
 
     static TypeId GetTypeId();
@@ -927,6 +928,16 @@ public:
         return m_target; 
     }
 
+    void SetID(uint32_t id)
+    {
+        m_ID = id;
+    }
+
+    uint32_t GetID() const
+    {
+        return m_ID;
+    }
+
     virtual uint32_t GetSerializedSize() const override;
     virtual void Serialize(Buffer::Iterator start) const override;
     virtual uint32_t Deserialize(Buffer::Iterator start) override;
@@ -936,6 +947,7 @@ public:
 private:
     Ipv4Address m_origin;
     Ipv4Address m_target;
+    uint32_t m_ID;
 };
 
 std::ostream &operator<<(std::ostream &os, const AuthPacketHeader &h);
@@ -950,8 +962,9 @@ class AuthReplyHeader : public Header
 {
 public:
     AuthReplyHeader(Ipv4Address origin = Ipv4Address(),   // A
-                    Ipv4Address target = Ipv4Address()
-                    );   // B
+                    Ipv4Address target = Ipv4Address(),   // B
+                    uint32_t id = 0
+                    );
 
     static TypeId GetTypeId();
     virtual TypeId GetInstanceTypeId() const override;
@@ -963,6 +976,16 @@ public:
     Ipv4Address GetOrigin() const { return m_origin; }
     Ipv4Address GetTarget() const { return m_target; }
 
+    void SetID(uint32_t id)
+    {
+        m_ID = id;
+    }
+
+    uint32_t GetID() const
+    {
+        return  m_ID;
+    }
+
     virtual uint32_t GetSerializedSize() const override;
     virtual void Serialize(Buffer::Iterator start) const override;
     virtual uint32_t Deserialize(Buffer::Iterator start) override;
@@ -971,6 +994,7 @@ public:
 private:
     Ipv4Address m_origin;  // 判定開始ノード
     Ipv4Address m_target;  // 判定対象ノード
+    uint32_t m_ID;
 };
 
 std::ostream &operator<<(std::ostream &os, const AuthReplyHeader &h);

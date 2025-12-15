@@ -619,7 +619,7 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param origin 判定開始ノード
      * @param target 判定対象ノード
      */
-    void SendAuthReply(Ipv4Address origin, Ipv4Address target);
+    void SendAuthReply(Ipv4Address origin, Ipv4Address target, uint32_t id);
 
     //監視・送信停止終了用のタイムアウト関数
     void Step3Timeout(Ipv4Address origin, Ipv4Address target);

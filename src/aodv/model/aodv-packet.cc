@@ -867,9 +867,11 @@ operator<<(std::ostream &os, const VerificationStartHeader &h)
 // AuthHeader
 //-----------------------------------------------------------------------------
 AuthPacketHeader::AuthPacketHeader(Ipv4Address origin,
-                                   Ipv4Address target)
+                                   Ipv4Address target,
+                                   uint32_t id)
     : m_origin(origin),
-      m_target(target)
+      m_target(target),
+      m_ID(id)
 {
 }
 
@@ -893,7 +895,7 @@ AuthPacketHeader::GetInstanceTypeId() const
 uint32_t
 AuthPacketHeader::GetSerializedSize() const
 {
-    return 8;
+    return 8 + 4;
 }
 
 void
@@ -901,6 +903,7 @@ AuthPacketHeader::Serialize(Buffer::Iterator i) const
 {
     WriteTo(i, m_origin);
     WriteTo(i, m_target);
+    i.WriteHtonU32(m_ID);
 }
 
 uint32_t
@@ -910,6 +913,7 @@ AuthPacketHeader::Deserialize(Buffer::Iterator start)
 
     ReadFrom(i, m_origin);
     ReadFrom(i, m_target);
+    m_ID = i.ReadNtohU32();
 
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
@@ -933,9 +937,11 @@ operator<<(std::ostream &os, const AuthPacketHeader &h)
 // AuthReplyHeader
 //-----------------------------------------------------------------------------
 AuthReplyHeader::AuthReplyHeader(Ipv4Address origin,
-                                   Ipv4Address target)
+                                   Ipv4Address target,
+                                uint32_t id)
     : m_origin(origin),
-      m_target(target)
+      m_target(target),
+      m_ID(id)
 {
 }
 
@@ -960,7 +966,7 @@ AuthReplyHeader::GetInstanceTypeId() const
 uint32_t
 AuthReplyHeader::GetSerializedSize() const
 {
-    return 8;
+    return 8 + 4;
 }
 
 void
@@ -968,6 +974,7 @@ AuthReplyHeader::Serialize(Buffer::Iterator i) const
 {
     WriteTo(i, m_origin);
     WriteTo(i, m_target);
+    i.WriteHtonU32(m_ID);
 }
 
 uint32_t
@@ -977,6 +984,7 @@ AuthReplyHeader::Deserialize(Buffer::Iterator start)
 
     ReadFrom(i, m_origin);
     ReadFrom(i, m_target);
+    m_ID = i.ReadNtohU32();
 
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());

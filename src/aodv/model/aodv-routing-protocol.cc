@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <limits>
 #include <queue>
+#include <fstream>
 
 #undef NS_LOG_APPEND_CONTEXT
 #define NS_LOG_APPEND_CONTEXT                                                                      \
@@ -2786,7 +2787,6 @@ RoutingProtocol::RecvReplyAck(Ptr<Packet> p, Ipv4Address neighbor, bool fromWh)
     
 // }
 
-// NS_LOG_COMPONENT_DEFINE("AodvHello");
 void
 RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool isRebroadcasted)
 {
@@ -2910,15 +2910,15 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
 
     if (Simulator::Now() < Seconds(5.0))
     {
-        NS_LOG_DEBUG("シュミレーション時間が2秒未満です。" << Simulator::Now());
+        NS_LOG_DEBUG("シュミレーション時間が5秒未満です。" << Simulator::Now());
         return;
     }
 
-    if(rB == 0)
-    {
-        NS_LOG_DEBUG("判定対象ノードの隣接ノード比率が0のため、検知対象にしません。");
-        return;
-    }
+    // if(rB == 0)
+    // {
+    //     NS_LOG_DEBUG("判定対象ノードの隣接ノード比率が0のため、検知対象にしません。");
+    //     return;
+    // }
 
     NS_LOG_DEBUG("ステップ2検知開始");
 
@@ -2963,6 +2963,10 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
             }
         }
 
+        //テスト用
+        StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
+        return;
+
         // 排他的隣接ノード数が１以下の場合、例外処理を実行
         if (exclusiveNeighbors.size() < 2)
         {
@@ -3001,7 +3005,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
             }
 
             // CREDND の特例ケースのしきい値 (論文では 1.5)
-            const double specialRatioThreshold = 3;
+            const double specialRatioThreshold = 2;
 
             NS_LOG_DEBUG("特例ケース判定:"
                          << " A=" << receiver
@@ -3020,11 +3024,40 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     || receiver == Ipv4Address("10.1.2.1")
                     || receiver == Ipv4Address("10.1.2.2"))
                 {
+                    NS_LOG_DEBUG("隣接比率のみの特例ケースにより、WHリンクと判定");
+                    std::ofstream ofs("test.log");
+                    uint32_t nodeId = GetObject<Node>()->GetId();
+
+                    ofs << "隣接比率のみの特例ケースにより、WHリンクと判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+                    ofs  << " A=" << receiver
+                         << " B=" << helloSender
+                         << " rA=" << rA
+                         << " rB=" << rB
+                         << " Th=" << specialRatioThreshold 
+                         <<std::endl;
+
+                    ofs.close();
+                    
                     //WH攻撃を正常に検知
                     m_whStats.detectedWh++;
                 }else{
                     //正常ノードをご検知
                     NS_LOG_DEBUG("特例によりご検知");
+
+                    std::ofstream ofs("test.log");
+                    uint32_t nodeId = GetObject<Node>()->GetId();
+
+                    ofs << "特例によりご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+
+                    ofs  << " A=" << receiver
+                         << " B=" << helloSender
+                         << " rA=" << rA
+                         << " rB=" << rB
+                         << " Th=" << specialRatioThreshold 
+                         <<std::endl;
+                         
+                    ofs.close();
+
                     m_whStats.falsePositive++;
                 }
 
@@ -3068,10 +3101,27 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     || receiver == Ipv4Address("10.1.2.1")
                     || receiver == Ipv4Address("10.1.2.2"))
                     {
+                        NS_LOG_DEBUG("別経路によりWH攻撃を正常に判定");
+
+                        std::ofstream ofs("test.log");
+                        uint32_t nodeId = GetObject<Node>()->GetId();
+
+                        ofs << "別経路によりWH攻撃を正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+                        ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+                        ofs.close();
+                        
                         //WHノードを正常に検知
                         m_whStats.detectedWh++;
                     }else{
                         NS_LOG_DEBUG("排他的隣接ノード数の別経路により、ご検知");
+
+                        std::ofstream ofs("test.log");
+                        uint32_t nodeId = GetObject<Node>()->GetId();
+
+                        ofs << "排他的隣接ノード数の別経路により、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+                        ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+                        ofs.close();
+
                         //正常ノードをWHノードとご検知
                         m_whStats.falsePositive++;
                     }
@@ -3090,6 +3140,13 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         
         if(isRebroadcasted || receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.1"))
         {
+            std::ofstream ofs("test.log");
+            uint32_t nodeId = GetObject<Node>()->GetId();
+
+            ofs << "ステップ2でWHリンクを正常リンクとご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+            ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+            ofs.close();
+
             NS_LOG_DEBUG("WHリンクを正常リンクとご判定");
             m_whStats.undetectedWh ++;
         }else{
@@ -3100,7 +3157,6 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
     return;
 }
 
-// NS_LOG_COMPONENT_DEFINE("AodvRoutingProtocol");
 
 // //内部WH攻撃 helloメッセージ転送のための再帰的呼び出し
 // void
@@ -3474,7 +3530,6 @@ RoutingProtocol::ProcessWhForwarding(Ptr<const Packet> originalPkt, uint16_t pro
     if (!p->RemoveHeader(ip))
     {
         NS_LOG_DEBUG("WH転送処理: IPv4ヘッダが見つかりません。" << myaddr);
-        return;
     }
 
     // ★ 追加部分: 送信元が相方ノードなら転送しない
@@ -3519,6 +3574,7 @@ RoutingProtocol::ProcessWhForwarding(Ptr<const Packet> originalPkt, uint16_t pro
 void
 RoutingProtocol::TunnelForward(Ptr<const Packet> pkt, Ipv4Address myaddr)
 {
+    NS_LOG_DEBUG("受信時のパケットタイプ：" << IdentifyAodvType(pkt));
     if(!m_isWhNode)
     {
         NS_LOG_DEBUG("WHノードではないノードが転送しようとしました。" << myaddr);
@@ -3665,32 +3721,32 @@ RoutingProtocol::IdentifyAodvType(Ptr<const Packet> packet) const
     UdpHeader udp;
     TypeHeader th;
 
-    // if (!p->RemoveHeader(ip))
-    //     return "NOT_IP";
+    if (!p->RemoveHeader(ip))
+        return "NOT_IP";
 
-    // --- 1. IPv4 ヘッダが無い or 不正 ---
-    // if (p->PeekHeader(ip))
-    // {
-    //     // L3 を外せる場合だけ Remove
-    //     if (p->RemoveHeader(ip))
-    //     {
-    //         if (ip.GetProtocol() != UdpL4Protocol::PROT_NUMBER)
-    //             return "NOT_UDP";
-    //     }
-    // }
+    //--- 1. IPv4 ヘッダが無い or 不正 ---
+    if (p->PeekHeader(ip))
+    {
+        // L3 を外せる場合だけ Remove
+        if (p->RemoveHeader(ip))
+        {
+            if (ip.GetProtocol() != UdpL4Protocol::PROT_NUMBER)
+                return "NOT_UDP";
+        }
+    }
 
-    // if (ip.GetProtocol() != UdpL4Protocol::PROT_NUMBER)
-    //     return "NOT_UDP";
+    if (ip.GetProtocol() != UdpL4Protocol::PROT_NUMBER)
+        return "NOT_UDP";
 
-    // --- 2. UDP ヘッダが無い or 不正 ---
-    // if (p->PeekHeader(udp))
-    // {
-    //     if (p->RemoveHeader(udp))
-    //     {
-    //         if (udp.GetDestinationPort() != AODV_PORT)
-    //             return "NOT_AODV";
-    //     }
-    // }
+    //--- 2. UDP ヘッダが無い or 不正 ---
+    if (p->PeekHeader(udp))
+    {
+        if (p->RemoveHeader(udp))
+        {
+            if (udp.GetDestinationPort() != AODV_PORT)
+                return "NOT_AODV";
+        }
+    }
 
     // p->RemoveHeader(udp);
     // --- 3. AODV TypeHeader の確認 ---
@@ -3928,9 +3984,11 @@ RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const Ro
 {
     NS_LOG_FUNCTION(this << origin << target);
 
-    NS_LOG_DEBUG("判定開始ノード：" << origin << "が判定対象ノード："<< target << "へ認証メッセージを送信しようとしています。");
+    m_requestId++;
 
-    AuthPacketHeader auth(origin, target);
+    AuthPacketHeader auth(origin, target, m_requestId);
+
+    NS_LOG_DEBUG("メッセージID：" << m_requestId << "   判定開始ノード：" << origin << "が判定対象ノード："<< target << "へ認証メッセージを送信しようとしています。");
 
     Ptr<Packet> packet = Create<Packet>();
 
@@ -4240,6 +4298,11 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
     AuthPacketHeader auth;
     p->RemoveHeader(auth);
 
+    Ipv4Address A = auth.GetOrigin(); //判定開始ノード
+    Ipv4Address B = auth.GetTarget(); //判定対象ノード
+
+    NS_LOG_DEBUG("認証メッセージ　A：" << A << "  B：" << B << "メッセージID：" << auth.GetID());
+
     //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
     if(m_isWhNode && fromWh)
     {
@@ -4258,6 +4321,12 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
         // WHノードからのブロードキャスト送信
         BroadcastWhPacket(packet, tag);
 
+        return;
+    }
+
+    if(!IsMyOwnAddress(B))
+    {
+        NS_LOG_DEBUG("認証パケットが自信宛ではないため、ドロップ");
         return;
     }
 
@@ -4280,10 +4349,7 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
         m_routingTable.AddRoute(newEntry);
     }
 
-    NS_LOG_DEBUG("判定対象ノード：" << receiver << "が判定開始ノード："<< sender << "からの認証メッセージを受信しました。");
-
-    Ipv4Address A = auth.GetOrigin(); //判定開始ノード
-    Ipv4Address B = auth.GetTarget(); //判定対象ノード
+    NS_LOG_DEBUG("受信ノード：" << receiver << "が送信ノード："<< sender << "からの認証メッセージを受信しました。");
 
      // ----- (1) witness の監視 -----　共通隣接ノードが認証メッセージを受信した場合の処理（Aからメッセージを正常に送信されているか、フォワーディングされていないか）
     // if (m_monitorTable[A][B].monitoring)
@@ -4295,7 +4361,7 @@ RoutingProtocol::RecvAuthPacket(Ptr<Packet> p,
     // ----- (2) B（判定対象）だけが Reply を返す -----
     if (IsMyOwnAddress(B))
     {
-        SendAuthReply(A, B);
+        SendAuthReply(A, B, auth.GetID());
     }
 }
 
@@ -4303,13 +4369,25 @@ void
 RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sender, bool fromWh)
 {
     NS_LOG_FUNCTION(this);
+    Ptr<Packet> copy = p->Copy();
+    NS_LOG_DEBUG("受診者：" << receiver << "が送信者："<< sender << "からの認証返信メッセージを受信しました。");
 
-    NS_LOG_DEBUG("判定開始ノード：" << receiver << "が判定対象ノード："<< sender << "からの認証返信メッセージを受信しました。");
+    AuthReplyHeader authRep_copy;
+    copy->RemoveHeader(authRep_copy);
+
+    Ipv4Address A = authRep_copy.GetOrigin();   // 判定開始ノード
+    Ipv4Address B = authRep_copy.GetTarget();     // 判定対象ノード
+
+    NS_LOG_DEBUG("メッセージID：" << authRep_copy.GetID() << "[Step3] 判定開始ノード " << A
+                  << " が判定対象ノード " << B
+                  << " から AUTHREP を受信");
 
     WhRebroadcastTag whReTag;
+    bool isRebroadcasted = false;
     if (p->RemovePacketTag(whReTag) && whReTag.Get())
     {
         NS_LOG_DEBUG("WHノードからの再ブロードキャスト認証返送メッセージを受信しました。送信者：" << sender);
+        isRebroadcasted = true;
 
         if(m_isWhNode)
         {   
@@ -4342,14 +4420,16 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
         return;
     }
 
-    
+    if(!IsMyOwnAddress(A))
+    {
+        NS_LOG_DEBUG("自身宛ではないため、ドロップ");
+        return;
+    }
 
-    Ipv4Address A = authRep.GetOrigin();   // 判定開始ノード
-    Ipv4Address B = authRep.GetTarget();     // 判定対象ノード
-
-    NS_LOG_DEBUG("[Step3] 判定開始ノード " << A
-                  << " が判定対象ノード " << B
-                  << " から AUTHREP を受信");
+    if(isRebroadcasted)
+    {
+        NS_LOG_DEBUG("認証応答メッセージが再ブロードキャストされました。");
+    }    
 
     if (m_step3ResultTable.count(A) == 0 ||
         m_step3ResultTable[A].count(B) == 0)
@@ -4371,7 +4451,7 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
     entry.replyReceived = true;
 
     //判定開始ノードが判定対象ノードからのAUTHREPを正常に受信した場合の処理
-    if(B == sender)
+    if(B == sender || !isRebroadcasted)
     {
         NS_LOG_DEBUG("[Step3] 判定開始ノード " << A
                       << " が判定対象ノード " << B
@@ -4382,9 +4462,17 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
             ||A == Ipv4Address("10.1.2.2"))
         {
             NS_LOG_DEBUG("認証応答メッセージ受信により、WHリンクをご判定");
+
+            std::ofstream ofs("test.log");
+            uint32_t nodeId = GetObject<Node>()->GetId();
+
+            ofs << "認証応答メッセージ受信により、WHリンクをご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+            ofs << "ターゲットノード：" << B << "  送信者：" << sender <<std::endl;
+            ofs.close();
+
             //WHノードを正常ノードとご検知
             m_whStats.undetectedWh++;
-        }else{
+        }else{            
             //正常ノードを正常に判定
             m_whStats.truenegative++;
         }
@@ -4400,10 +4488,26 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
            ||A == Ipv4Address("10.1.2.1")
            ||A == Ipv4Address("10.1.2.2"))
         {
+            NS_LOG_DEBUG("認証応答メッセージ受信により、WHリンクを正常に判定");
+            std::ofstream ofs("test.log");
+            uint32_t nodeId = GetObject<Node>()->GetId();
+
+            ofs << "認証応答メッセージ受信により、WHリンクを正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+            ofs << "ターゲットノード：" << B << "  送信者：" << sender <<std::endl;
+            ofs.close();
+
             //WHノードを正常に検知
             m_whStats.detectedWh++;
         }else{
             NS_LOG_DEBUG("認証応答メッセージ受信元が異なるため、ご検知");
+
+            std::ofstream ofs("test.log");
+            uint32_t nodeId = GetObject<Node>()->GetId();
+
+            ofs << "認証応答メッセージ受信元が異なるため、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+            ofs << "ターゲットノード：" << B << "  送信者：" << sender <<std::endl;
+            ofs.close();
+
             //正常ノードをご検知
             m_whStats.falsePositive++;
         }
@@ -4460,6 +4564,14 @@ RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadc
           || A == Ipv4Address("10.1.2.2"))
         {
             NS_LOG_DEBUG("タグによりWHノードを正常ノードとご判定");
+
+            std::ofstream ofs("test.log");
+            uint32_t nodeId = GetObject<Node>()->GetId();
+
+            ofs << "タグによりWHノードを正常ノードとご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+            ofs << "ターゲットノード：" << B << "  タグ：" << s <<std::endl;
+            ofs.close();
+
             //WH攻撃を正常ノードとご検知
             m_whStats.undetectedWh++;
         }else{
@@ -4476,10 +4588,26 @@ RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadc
           || A == Ipv4Address("10.1.2.1")
           || A == Ipv4Address("10.1.2.2"))
         {
+            NS_LOG_DEBUG("タグによりWHノードを正常に判定");
+            std::ofstream ofs("test.log");
+            uint32_t nodeId = GetObject<Node>()->GetId();
+
+            ofs << "タグによりWHノードを正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+            ofs << "ターゲットノード：" << B << "  タグ：" << s <<std::endl;
+            ofs.close();
+
             //WH攻撃を正常に判定
             m_whStats.detectedWh++;
         }else{
             NS_LOG_DEBUG("共通隣接ノードのタグにより、ご検知");
+
+            std::ofstream ofs("test.log");
+            uint32_t nodeId = GetObject<Node>()->GetId();
+
+            ofs << "共通隣接ノードのタグにより、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+            ofs << "ターゲットノード：" << B << "  タグ：" << s <<std::endl;
+            ofs.close();
+
             //正常ノードをご検知
             m_whStats.falsePositive++;
         }
@@ -4593,16 +4721,17 @@ RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addres
 }
 
 void
-RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target)
+RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target, uint32_t id)
 {
     NS_LOG_FUNCTION(this << origin << target);
 
-    NS_LOG_DEBUG("判定対象ノード：" << target << "が判定開始ノード："<< origin << "へ認証返信メッセージを送信しようとしています。");
+    NS_LOG_DEBUG("メッセージID：" << id << "判定対象ノード：" << target << "が判定開始ノード："<< origin << "へ認証返信メッセージを送信しようとしています。");
 
     // --- 1. AuthReplyHeader 作成 ---
     AuthReplyHeader rep;
     rep.SetOrigin(origin);      // 判定開始ノード
     rep.SetTarget(target);  // 判定対象ノード
+    rep.SetID(id);
 
     // ルーティングテーブルから A への経路を取得
     RoutingTableEntry toA;
@@ -5251,7 +5380,6 @@ RoutingProtocol::AckTimerExpire(Ipv4Address neighbor, Time blacklistTimeout)
     m_routingTable.MarkLinkAsUnidirectional(neighbor, blacklistTimeout);
 }
 
-// NS_LOG_COMPONENT_DEFINE("AodvHello");
 void
 RoutingProtocol::SendHello()
 {
@@ -5352,7 +5480,6 @@ RoutingProtocol::SendHello()
     }
 }
 
-// NS_LOG_COMPONENT_DEFINE("AodvRoutingProtocol");
 
 void
 RoutingProtocol::SendPacketFromQueue(Ipv4Address dst, Ptr<Ipv4Route> route)
