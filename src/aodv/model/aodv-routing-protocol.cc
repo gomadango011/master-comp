@@ -1662,12 +1662,6 @@ RoutingProtocol::BroadcastWhPacket(Ptr<Packet> packet, SocketIpTtlTag tag)
     whReTag.Set(true);
     packet->AddPacketTag(whReTag);
 
-    if (tag.GetTtl() < 2)
-    {
-        NS_LOG_DEBUG("WHパケットのTTLが1以下のため、再ブロードキャストしません");
-        return;
-    }
-
     // ===============================
     // 3. 各インタフェースに送信
     // ===============================
@@ -3979,8 +3973,46 @@ RoutingProtocol::SendBlocked_Stop_Request()
     }
 }
 
+// void
+// RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const RoutingTableEntry &toTarget)
+// {
+//     NS_LOG_FUNCTION(this << origin << target);
+
+//     m_requestId++;
+
+//     AuthPacketHeader auth(origin, target, m_requestId);
+
+//     NS_LOG_DEBUG("メッセージID：" << m_requestId << "   判定開始ノード：" << origin << "が判定対象ノード："<< target << "へ認証メッセージを送信しようとしています。");
+
+//     Ptr<Packet> packet = Create<Packet>();
+
+//     // TTL は 1 で十分（A→B だけ届けば良い）
+//     SocketIpTtlTag ttl;
+//     ttl.SetTtl(1);
+//     packet->AddPacketTag(ttl);
+
+//     // AuthPacketHeader を追加
+//     packet->AddHeader(auth);
+
+//     //TypeHeader
+//     TypeHeader tHeader(AODVTYPE_AUTH);
+//     packet->AddHeader(tHeader);
+
+//     Ptr<Socket> socket = FindSocketWithInterfaceAddress(toTarget.GetInterface());
+//     NS_ASSERT(socket);
+
+//     NS_LOG_INFO("SendAuthPacket: A=" << origin
+//                 << " → B=" << target
+//                 << " nextHop=" << toTarget.GetNextHop());
+
+//     // socket->SendTo(packet, 0, InetSocketAddress(toTarget.GetNextHop(), AODV_PORT));
+//     SendTo(socket, packet, toTarget.GetNextHop());
+// }
+
 void
-RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const RoutingTableEntry &toTarget)
+RoutingProtocol::SendAuthPacket(Ipv4Address origin,
+                                Ipv4Address target,
+                                const RoutingTableEntry &toTarget)
 {
     NS_LOG_FUNCTION(this << origin << target);
 
@@ -3988,32 +4020,71 @@ RoutingProtocol::SendAuthPacket(Ipv4Address origin, Ipv4Address target, const Ro
 
     AuthPacketHeader auth(origin, target, m_requestId);
 
-    NS_LOG_DEBUG("メッセージID：" << m_requestId << "   判定開始ノード：" << origin << "が判定対象ノード："<< target << "へ認証メッセージを送信しようとしています。");
+    NS_LOG_DEBUG("メッセージID：" << m_requestId
+                 << "   判定開始ノード：" << origin
+                 << "が判定対象ノード：" << target
+                 << "へ認証メッセージを送信しようとしています。");
 
     Ptr<Packet> packet = Create<Packet>();
 
-    // TTL は 1 で十分（A→B だけ届けば良い）
+    // ★WHに拾わせたいので TTL=1 は禁止（入口WHが受信する前に落ちる可能性）
     SocketIpTtlTag ttl;
-    ttl.SetTtl(1);
+    ttl.SetTtl(2/*std::max<uint8_t>(2, m_netDiameter)*/); // 迷うなら m_netDiameter
     packet->AddPacketTag(ttl);
 
-    // AuthPacketHeader を追加
+    // Header を積む順番は今のままでOK（受信側が同じ順で外すなら）
     packet->AddHeader(auth);
 
-    //TypeHeader
     TypeHeader tHeader(AODVTYPE_AUTH);
     packet->AddHeader(tHeader);
 
-    Ptr<Socket> socket = FindSocketWithInterfaceAddress(toTarget.GetInterface());
-    NS_ASSERT(socket);
-
-    NS_LOG_INFO("SendAuthPacket: A=" << origin
+    NS_LOG_INFO("SendAuthPacket(L2-bcast): A=" << origin
                 << " → B=" << target
-                << " nextHop=" << toTarget.GetNextHop());
+                << " (WHに拾わせるため無線ブロードキャスト送信)");
 
-    // socket->SendTo(packet, 0, InetSocketAddress(toTarget.GetNextHop(), AODV_PORT));
-    SendTo(socket, packet, toTarget.GetNextHop());
+    // ===============================
+    // ★重要：IPv4 unicast(SendTo) ではなく
+    //        無線 L2 ブロードキャストとして送る
+    // ===============================
+    for (auto it = m_socketAddresses.begin(); it != m_socketAddresses.end(); ++it)
+    {
+        Ptr<Socket> socket = it->first;
+        Ipv4InterfaceAddress iface = it->second;
+
+        // ループバックや除外IFがあるならスキップ（あなたの実装に合わせて）
+        if (iface.GetLocal() == Ipv4Address::GetLoopback())
+        {
+            continue;
+        }
+
+        // インタフェースごとに複製して送る
+        Ptr<Packet> outPkt = packet->Copy();
+
+        // TTL タグも複製側に付け直し（Copyでタグが落ちる実装差を潰す）
+        SocketIpTtlTag ttl2;
+        ttl2.SetTtl(ttl.GetTtl());
+        outPkt->ReplacePacketTag(ttl2);
+
+        // 宛先ブロードキャスト（/32なら255.255.255.255）
+        Ipv4Address destination;
+        if (iface.GetMask() == Ipv4Mask::GetOnes())
+        {
+            destination = Ipv4Address("255.255.255.255");
+        }
+        else
+        {
+            destination = iface.GetBroadcast();
+        }
+
+        // AODVポートにブロードキャスト送信（無線に放射されPromiscSniffで拾える）
+        socket->SendTo(outPkt, 0, InetSocketAddress(destination, AODV_PORT));
+
+        NS_LOG_DEBUG("SendAuthPacket: iface=" << iface.GetLocal()
+                     << " bcast=" << destination
+                     << " size=" << outPkt->GetSize());
+    }
 }
+
 
 //ステップ3　送信停止と監視を要求するメッセージを送信
 void
@@ -4095,8 +4166,6 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
 
         return;
     }
-
-    
 
     Ipv4Address A = vsh.GetOrigin();   // 判定開始ノード
     Ipv4Address B = vsh.GetTarget();   // 判定対象ノード
@@ -4721,50 +4790,82 @@ RoutingProtocol::RecvStep3Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addres
 }
 
 void
-RoutingProtocol::SendAuthReply(Ipv4Address origin, Ipv4Address target, uint32_t id)
+RoutingProtocol::SendAuthReply(Ipv4Address origin,
+                               Ipv4Address target,
+                               uint32_t id)
 {
     NS_LOG_FUNCTION(this << origin << target);
 
-    NS_LOG_DEBUG("メッセージID：" << id << "判定対象ノード：" << target << "が判定開始ノード："<< origin << "へ認証返信メッセージを送信しようとしています。");
+    NS_LOG_DEBUG("メッセージID：" << id
+                 << " 判定対象ノード：" << target
+                 << " が判定開始ノード：" << origin
+                 << " へ認証返信メッセージを送信");
 
     // --- 1. AuthReplyHeader 作成 ---
     AuthReplyHeader rep;
-    rep.SetOrigin(origin);      // 判定開始ノード
-    rep.SetTarget(target);  // 判定対象ノード
+    rep.SetOrigin(origin);   // 判定開始ノード
+    rep.SetTarget(target);   // 判定対象ノード
     rep.SetID(id);
 
-    // ルーティングテーブルから A への経路を取得
-    RoutingTableEntry toA;
-    if (!m_routingTable.LookupRoute(origin, toA))
-    {
-        NS_LOG_ERROR("SendAuthReply: route to A not found: " << origin);
-        return;
-    }
-
     Ptr<Packet> packet = Create<Packet>();
-    // TTL は 1 で十分（A→B だけ届けば良い）
+
+    // ★ WHに拾わせるため TTL=1 は禁止
     SocketIpTtlTag ttl;
-    ttl.SetTtl(1);
+    ttl.SetTtl(std::max<uint8_t>(2, m_netDiameter));
     packet->AddPacketTag(ttl);
 
-    // AuthPacketHeader を追加
+    // Header 追加
     packet->AddHeader(rep);
 
-    // まず TypeHeader
     TypeHeader tHeader(AODVTYPE_AUTHREP);
     packet->AddHeader(tHeader);
 
-    Ptr<Socket> socket = FindSocketWithInterfaceAddress(toA.GetInterface());
-    NS_ASSERT(socket);
+    NS_LOG_INFO("SendAuthReply(L2-bcast): target=" << target
+                << " → origin=" << origin
+                << " (WHに拾わせるため無線ブロードキャスト)");
 
-    NS_LOG_INFO("SendAuthPacketReply: 判定開始ノード=" << origin
-                << " → 判定対象ノード=" << target
-                << " nextHop=" << toA.GetNextHop());
+    // ===============================
+    // ★重要：IPv4 unicast をやめて
+    //        無線 L2 ブロードキャスト送信
+    // ===============================
+    for (auto it = m_socketAddresses.begin(); it != m_socketAddresses.end(); ++it)
+    {
+        Ptr<Socket> socket = it->first;
+        Ipv4InterfaceAddress iface = it->second;
 
-    // socket->SendTo(packet, 0, InetSocketAddress(toA.GetNextHop(), AODV_PORT));
-    // ★重要：RoutingProtocol::SendTo() を使う
-    SendTo(socket, packet, toA.GetNextHop());
+        // ループバック等は除外（必要に応じて）
+        if (iface.GetLocal() == Ipv4Address::GetLoopback())
+        {
+            continue;
+        }
+
+        Ptr<Packet> outPkt = packet->Copy();
+
+        // TTLタグを確実に付与
+        SocketIpTtlTag ttl2;
+        ttl2.SetTtl(ttl.GetTtl());
+        outPkt->ReplacePacketTag(ttl2);
+
+        // ブロードキャストアドレス決定
+        Ipv4Address destination;
+        if (iface.GetMask() == Ipv4Mask::GetOnes())
+        {
+            destination = Ipv4Address("255.255.255.255");
+        }
+        else
+        {
+            destination = iface.GetBroadcast();
+        }
+
+        socket->SendTo(outPkt, 0,
+                       InetSocketAddress(destination, AODV_PORT));
+
+        NS_LOG_DEBUG("SendAuthReply: iface=" << iface.GetLocal()
+                     << " bcast=" << destination
+                     << " size=" << outPkt->GetSize());
+    }
 }
+
 
 void
 RoutingProtocol::Step3Timeout(Ipv4Address origin, Ipv4Address target)
@@ -4800,6 +4901,61 @@ RoutingProtocol::Step3Timeout(Ipv4Address origin, Ipv4Address target)
     }
 }
 
+// void
+// RoutingProtocol::SendStep3Result(Ipv4Address origin,
+//                                  Ipv4Address target,
+//                                  Ipv4Address witness,
+//                                  int8_t tag)
+// {
+//     NS_LOG_FUNCTION(this << origin << target << witness << int(tag));
+
+//     // A(判定開始ノード) への経路
+//     RoutingTableEntry toA;
+//     if (!m_routingTable.LookupRoute(origin, toA))
+//     {
+//         NS_LOG_WARN("SendStep3Result: route to origin(A) not found: " << origin);
+//         return;
+//     }
+
+//     Ptr<Packet> packet = Create<Packet>();
+//     // TTL は A に届けば良いので 1 or 少し大きめでも OK
+//     SocketIpTtlTag ttl;
+//     ttl.SetTtl(2);
+//     packet->AddPacketTag(ttl);
+
+//     // 結果ヘッダ (payload)
+//     Step3ResultHeader res(origin, 
+//                           target, 
+//                           witness, 
+//                           tag);
+//     packet->AddHeader(res);
+
+//     // AODV TypeHeader は最後に積む（＝先頭になる）
+//     TypeHeader tHeader(AODVTYPE_STEP3RESULT);
+//     packet->AddHeader(tHeader);
+
+//     Ptr<Socket> socket = FindSocketWithInterfaceAddress(toA.GetInterface());
+//     if(!socket)
+//     {
+//         NS_LOG_ERROR("SendStep3Result: no socket for iface="
+//                  << toA.GetInterface().GetLocal()
+//                  << " (route entry broken?)");
+
+//         return;
+//     }
+
+//     NS_LOG_DEBUG("[Step3][監視ノード=" << witness
+//                  << "] 監視結果メッセージを 判定開始ノード A=" << origin
+//                  << " に送信.  for pair (A=" << origin << ", B=" << target
+//                  << ") tag=" << int(tag)
+//                  << " via nextHop=" << toA.GetNextHop());
+
+//     // ★重要★: sendBlocked 中でも送りたいので SendTo を通す。
+//     // SendTo 側で AODVTYPE_STEP3RESULT を forceSend に含めておくこと。
+//     SendTo(socket, packet, toA.GetNextHop());
+
+// }
+
 void
 RoutingProtocol::SendStep3Result(Ipv4Address origin,
                                  Ipv4Address target,
@@ -4808,52 +4964,71 @@ RoutingProtocol::SendStep3Result(Ipv4Address origin,
 {
     NS_LOG_FUNCTION(this << origin << target << witness << int(tag));
 
-    // A(判定開始ノード) への経路
-    RoutingTableEntry toA;
-    if (!m_routingTable.LookupRoute(origin, toA))
-    {
-        NS_LOG_WARN("SendStep3Result: route to origin(A) not found: " << origin);
-        return;
-    }
-
     Ptr<Packet> packet = Create<Packet>();
-    // TTL は A に届けば良いので 1 or 少し大きめでも OK
+
+    // ★ WHに拾わせるため TTL=2以上
     SocketIpTtlTag ttl;
-    ttl.SetTtl(1);
+    ttl.SetTtl(std::max<uint8_t>(2, m_netDiameter));
     packet->AddPacketTag(ttl);
 
-    // 結果ヘッダ (payload)
-    Step3ResultHeader res(origin, 
-                          target, 
-                          witness, 
+    // 結果ヘッダ
+    Step3ResultHeader res(origin,
+                          target,
+                          witness,
                           tag);
     packet->AddHeader(res);
 
-    // AODV TypeHeader は最後に積む（＝先頭になる）
+    // TypeHeader（最後に Add → 先頭に来る）
     TypeHeader tHeader(AODVTYPE_STEP3RESULT);
     packet->AddHeader(tHeader);
 
-    Ptr<Socket> socket = FindSocketWithInterfaceAddress(toA.GetInterface());
-    if(!socket)
-    {
-        NS_LOG_ERROR("SendStep3Result: no socket for iface="
-                 << toA.GetInterface().GetLocal()
-                 << " (route entry broken?)");
-
-        return;
-    }
-
     NS_LOG_DEBUG("[Step3][監視ノード=" << witness
                  << "] 監視結果メッセージを 判定開始ノード A=" << origin
-                 << " に送信.  for pair (A=" << origin << ", B=" << target
-                 << ") tag=" << int(tag)
-                 << " via nextHop=" << toA.GetNextHop());
+                 << " に送信 (WHに拾わせるため無線ブロードキャスト)");
 
-    // ★重要★: sendBlocked 中でも送りたいので SendTo を通す。
-    // SendTo 側で AODVTYPE_STEP3RESULT を forceSend に含めておくこと。
-    SendTo(socket, packet, toA.GetNextHop());
+    // =====================================================
+    // ★重要：SendTo(nextHop) をやめて
+    //        無線 L2 ブロードキャスト送信
+    // =====================================================
+    for (auto it = m_socketAddresses.begin();
+         it != m_socketAddresses.end(); ++it)
+    {
+        Ptr<Socket> socket = it->first;
+        Ipv4InterfaceAddress iface = it->second;
 
+        // ループバックは除外
+        if (iface.GetLocal() == Ipv4Address::GetLoopback())
+        {
+            continue;
+        }
+
+        Ptr<Packet> outPkt = packet->Copy();
+
+        // TTLタグを確実に付与
+        SocketIpTtlTag ttl2;
+        ttl2.SetTtl(ttl.GetTtl());
+        outPkt->ReplacePacketTag(ttl2);
+
+        // ブロードキャストアドレス決定
+        Ipv4Address destination;
+        if (iface.GetMask() == Ipv4Mask::GetOnes())
+        {
+            destination = Ipv4Address("255.255.255.255");
+        }
+        else
+        {
+            destination = iface.GetBroadcast();
+        }
+
+        socket->SendTo(outPkt, 0,
+                       InetSocketAddress(destination, AODV_PORT));
+
+        NS_LOG_DEBUG("SendStep3Result: iface=" << iface.GetLocal()
+                     << " bcast=" << destination
+                     << " size=" << outPkt->GetSize());
+    }
 }
+
 
 // //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
 // void
