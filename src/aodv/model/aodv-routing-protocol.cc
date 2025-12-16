@@ -2918,7 +2918,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
 
     if (Simulator::Now() < Seconds(3.0))
     {
-        NS_LOG_DEBUG("シュミレーション時間が5秒未満です。" << Simulator::Now());
+        NS_LOG_DEBUG("シュミレーション時間が3秒未満です。" << Simulator::Now());
         return;
     }
 

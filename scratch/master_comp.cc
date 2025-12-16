@@ -78,6 +78,29 @@ NodeContainer fixedNodes;
 //移動ノード
 NodeContainer mobileNodes;
 
+std::ofstream ofs;
+
+//ファイルを更新または作成
+void
+OpenLogFileOverwrite(std::ofstream& ofs, const std::string& filepath)
+{
+    fs::path p(filepath);
+
+    // 親ディレクトリが無ければ作成
+    if (!p.parent_path().empty())
+    {
+        fs::create_directories(p.parent_path());
+    }
+
+    // 上書きモードで open（存在すれば中身は消える）
+    ofs.open(filepath, std::ios::out | std::ios::app);
+
+    if (!ofs.is_open())
+    {
+        NS_FATAL_ERROR("Cannot open result file: " << filepath);
+    }
+}
+
 // AnimationInterface* anim = new AnimationInterface("anim.xml");
 
 class AodvExample
@@ -131,9 +154,6 @@ class AodvExample
 
     //WHリンクの長さ
     int WH_size;
-
-    //検知待機時間
-    double wait_time;
 
     //エンド間の距離
     int end_distance;
@@ -248,7 +268,6 @@ AodvExample::AodvExample()
       result_file("deff/p-log"), //結果を保存するファイル
       result_mode(2),
       WH_size(350),
-      wait_time(0.5),
       end_distance(600), //エンド間の距離
       iteration(1) //イテレーション
 {
@@ -260,8 +279,8 @@ AodvExample::Configure(int argc, char** argv)
     // Enable AODV logs by default. Comment this if too noisy
     // LogComponentEnable("AodvRoutingProtocol", LOG_LEVEL_ALL);
 
-    std::random_device randomseed;
-    int rand = randomseed();
+    // std::random_device randomseed;
+    // int rand = randomseed();
 
     CommandLine cmd(__FILE__);
 
@@ -273,13 +292,12 @@ AodvExample::Configure(int argc, char** argv)
     cmd.AddValue("result_file", "result file", result_file);
     //cmd.AddValue("result_mode", "result mode", result_mode); //1=ご検知率と検知コスト　2=検知率　3=経路作成時間
     cmd.AddValue("WH_size", "WH size", WH_size); //WHの長さ
-    cmd.AddValue("wait_time", "Detection wait time", wait_time); //検知待機時間
     cmd.AddValue("end_distance", "end distance", end_distance); //エンド間の距離
     cmd.AddValue("iteration", "iteration", iteration); //イテレーション
 
     cmd.Parse(argc, argv);
 
-    SeedManager::SetSeed(1);
+    SeedManager::SetSeed(iteration);
 
     if(end_distance -WH_size - 110 < 30)
     {
@@ -313,18 +331,22 @@ void
 AodvExample::Report(std::ostream& os)
 {
     // ★ 出力ファイルを開く（追記 or 上書き）
-    std::ofstream fout("aodv_result.log", std::ios::out);
-
-    auto write = [&](auto const &msg) {
-        os   << msg << std::endl;   // 標準出力
-        fout << msg << std::endl;   // ファイル出力
-    };
-
-    write("==================== AODV PERFORMANCE REPORT ====================");
+    OpenLogFileOverwrite(ofs, result_file);
 
     uint32_t totalTP = 0, totalFN = 0, totalFP = 0, totalTN = 0, totalNA = 0;
     uint64_t totalBytes = 0;
     std::vector<double> latencies;
+
+    // ===== ヘッダはファイルが空のときだけ =====
+    static bool headerWritten = false;
+    if (!headerWritten)
+    {
+        ofs << "seed,nodes,wh_mode,end_distance,"
+            << "tp,fn,fp,tn,"
+            << "wh_detection_rate,false_positive_rate,"
+            << "total_ctrl_bytes,avg_route_latency\n";
+        headerWritten = true;
+    }
 
     for (uint32_t i = 0; i < nodes.GetN(); i++)
     {
@@ -365,21 +387,20 @@ AodvExample::Report(std::ostream& os)
         avgLatency = sum / latencies.size();
     }
 
-    write("WH Detection Rate        : " + std::to_string(detectionRate));
-    write("False Positive Rate      : " + std::to_string(falsePositiveRate));
-    write("Average Route Latency    : " + std::to_string(avgLatency) + " sec");
-    write("");
-    write("--- Detail Stats ---");
-    write("TP  : " + std::to_string(totalTP));
-    write("FN  : " + std::to_string(totalFN));
-    write("FP  : " + std::to_string(totalFP));
-    write("TN  : " + std::to_string(totalTN));
-    write("NA  : " + std::to_string(totalNA));
-    write("Detection Bytes : " + std::to_string(totalBytes) + " bytes");
+     ofs << iteration << ","
+        << size << ","
+        << 2 << ","               // WhMode
+        << end_distance << ","
+        << totalTP << ","
+        << totalFN << ","
+        << totalFP << ","
+        << totalTN << ","
+        << detectionRate << ","
+        << falsePositiveRate << ","
+        << totalBytes << ","
+        << avgLatency << "\n";
 
-    write("===============================================================");
-
-    fout.close();
+    ofs.close();
 }
 
 void
@@ -631,7 +652,7 @@ AodvExample::InstallApplications()
     PingHelper ping1(dst1);
     ping1.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
     ApplicationContainer app1 = ping1.Install(nodes.Get(0));  // 送信者
-    app1.Start(Seconds(0));
+    app1.Start(Seconds(3));
     app1.Stop(Seconds(totalTime) - Seconds(0.001));
 
 
@@ -642,7 +663,7 @@ AodvExample::InstallApplications()
     PingHelper ping2(dst2);
     ping2.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
     ApplicationContainer app2 = ping2.Install(nodes.Get(3));  // 送信者
-    app2.Start(Seconds(0));
+    app2.Start(Seconds(3));
     app2.Stop(Seconds(totalTime) - Seconds(0.001));
 
 
@@ -653,6 +674,6 @@ AodvExample::InstallApplications()
     PingHelper ping3(dst3);
     ping3.SetAttribute("VerboseMode", EnumValue(Ping::VerboseMode::VERBOSE));
     ApplicationContainer app3 = ping3.Install(nodes.Get(5));  // 送信者
-    app3.Start(Seconds(0));
+    app3.Start(Seconds(3));
     app3.Stop(Seconds(totalTime) - Seconds(0.001));
 }
