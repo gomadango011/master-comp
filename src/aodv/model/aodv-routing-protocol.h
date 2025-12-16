@@ -454,6 +454,14 @@ class RoutingProtocol : public Ipv4RoutingProtocol
         return m_WH_link_length;
     }
 
+    //隣接ノード情報保存用
+    struct NeighborInfo {
+        Time lastHello;
+        uint32_t neighborCount; // 相手が送ってきた値
+    };
+
+    std::map<Ipv4Address, NeighborInfo> m_neighborTable;
+
   private:
     /// Start protocol operation
     void Start();

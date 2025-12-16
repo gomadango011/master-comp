@@ -240,14 +240,15 @@ int main(int argc, char** argv)
 AodvExample::AodvExample()
     : size(400),
       step(),
-      totalTime(20),
+      totalTime(10),
       //pcapファイルでログを取得したい場合はtrueにする
       pcap(false),
       printRoutes(false),
       RREP_log(1),  //RREPのログを取得(1:ログ取得、0:ログ取得しない)
       result_file("deff/p-log"), //結果を保存するファイル
-      //result_mode(0)
+      result_mode(2),
       WH_size(350),
+      wait_time(0.5),
       end_distance(600), //エンド間の距離
       iteration(1) //イテレーション
 {
@@ -278,7 +279,7 @@ AodvExample::Configure(int argc, char** argv)
 
     cmd.Parse(argc, argv);
 
-    SeedManager::SetSeed(rand);
+    SeedManager::SetSeed(1);
 
     if(end_distance -WH_size - 110 < 30)
     {
@@ -411,21 +412,66 @@ AodvExample::CreateNodes()
         }
     }
 
+    uint32_t total = mobileNodes.GetN();
+    uint32_t half  = total / 2;
 
+    NodeContainer carNodes;
+    NodeContainer pedestrianNodes;
+
+    for (uint32_t i = 0; i < total; ++i)
+    {
+        if (i < half)
+        {
+            carNodes.Add(mobileNodes.Get(i));
+        }
+        else
+        {
+            pedestrianNodes.Add(mobileNodes.Get(i));
+        }
+    }
     
-    //ノードをランダムに配置
-    MobilityHelper mobility;
-    mobility.SetPositionAllocator ("ns3::RandomRectanglePositionAllocator",
-                                  "X", StringValue("ns3::UniformRandomVariable[Min=0|Max=800]"),
-                                  "Y", StringValue("ns3::UniformRandomVariable[Min=0|Max=800]")
-                                 ); 
+    // ===============================
+    // 共通 PositionAllocator ノードをランダムに配置
+    // ===============================
+    Ptr<PositionAllocator> positionAlloc =
+        CreateObject<RandomRectanglePositionAllocator>();
+    positionAlloc->SetAttribute("X",
+        StringValue("ns3::UniformRandomVariable[Min=0|Max=800]"));
+    positionAlloc->SetAttribute("Y",
+        StringValue("ns3::UniformRandomVariable[Min=0|Max=800]"));
 
-                                 //ノードを移動させる
-    mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
-                                "Bounds", RectangleValue (Rectangle (0, 800, 0, 800)),
-                               "Speed", StringValue("ns3::UniformRandomVariable[Min=3|Max=14]"),
-                               "Distance", DoubleValue(50.0)
-                            );
+    // ===============================
+    // 自動車ノード（11–16 m/s）
+    // ===============================
+    MobilityHelper carMobility;
+    carMobility.SetPositionAllocator(positionAlloc);
+    carMobility.SetMobilityModel(
+        "ns3::RandomWaypointMobilityModel",
+        "Speed", StringValue("ns3::UniformRandomVariable[Min=11.0|Max=16.0]"),
+        "Pause", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"),
+        "PositionAllocator", PointerValue(positionAlloc)
+    );
+    carMobility.Install(carNodes);
+
+    // ===============================
+    // 歩行者ノード（1–5 m/s）
+    // ===============================
+    MobilityHelper pedestrianMobility;
+    pedestrianMobility.SetPositionAllocator(positionAlloc);
+    pedestrianMobility.SetMobilityModel(
+        "ns3::RandomWaypointMobilityModel",
+        "Speed", StringValue("ns3::UniformRandomVariable[Min=1.0|Max=5.0]"),
+        "Pause", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"),
+        "PositionAllocator", PointerValue(positionAlloc)
+    );
+    pedestrianMobility.Install(pedestrianNodes);
+
+    //                              //ノードを移動させる
+    // mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
+    //                             "Bounds", RectangleValue (Rectangle (0, 800, 0, 800)),
+    //                            "Speed", StringValue("ns3::UniformRandomVariable[Min=3|Max=14]"),
+    //                            "Distance", DoubleValue(50.0)
+    //                         );
     // mobility.SetMobilityModel ("ns3::RandomWaypointMobilityModel",
     // "Speed", StringValue ("ns3::ConstantRandomVariable[Constant=5.0]"),
     // "Pause", StringValue ("ns3::ConstantRandomVariable[Constant=2.0]")
@@ -439,26 +485,26 @@ AodvExample::CreateNodes()
 
     // mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
 
-    mobility.Install (mobileNodes);
+    // mobility.Install (mobileNodes);
 
     MobilityHelper fixedMobility;
 
     // 固定ノードの位置を設定
-    Ptr<ListPositionAllocator> positionAlloc = CreateObject<ListPositionAllocator>();
-    positionAlloc->Add(Vector(0, 400, 0));  //送信者の位置情報　ID=0
+    Ptr<ListPositionAllocator> fixedpositionAlloc = CreateObject<ListPositionAllocator>();
+    fixedpositionAlloc->Add(Vector(0, 400, 0));  //送信者の位置情報　ID=0
 
-    positionAlloc->Add(Vector(end_distance - WH_size - 110, 400, 0));  //WH1の位置情報　ID:1
-    positionAlloc->Add(Vector(end_distance - 110, 400, 0));  //WH2の位置情報            ID:2
+    fixedpositionAlloc->Add(Vector(end_distance - WH_size - 110, 400, 0));  //WH1の位置情報　ID:1
+    fixedpositionAlloc->Add(Vector(end_distance - 110, 400, 0));  //WH2の位置情報            ID:2
 
-    positionAlloc->Add(Vector(0, 500, 0));  //送信ノード２            ID:3
-    positionAlloc->Add(Vector(end_distance, 300, 0));  //受信ノード2         ID:4
+    fixedpositionAlloc->Add(Vector(0, 500, 0));  //送信ノード２            ID:3
+    fixedpositionAlloc->Add(Vector(end_distance, 300, 0));  //受信ノード2         ID:4
 
-    positionAlloc->Add(Vector(0, 300, 0));  //送信ノード３           ID:5
-    positionAlloc->Add(Vector(end_distance, 500, 0));  //受信者ノード3  ID:6
+    fixedpositionAlloc->Add(Vector(0, 300, 0));  //送信ノード３           ID:5
+    fixedpositionAlloc->Add(Vector(end_distance, 500, 0));  //受信者ノード3  ID:6
     
-    positionAlloc->Add(Vector(end_distance, 400, 0));  //受信者の位置情報  ID=size-1
+    fixedpositionAlloc->Add(Vector(end_distance, 400, 0));  //受信者の位置情報  ID=size-1
 
-    fixedMobility.SetPositionAllocator(positionAlloc);
+    fixedMobility.SetPositionAllocator(fixedpositionAlloc);
     
     fixedMobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
 
@@ -523,7 +569,6 @@ AodvExample::InstallInternetStack()
 
     aodv.Set("DestinationOnly", BooleanValue(false));
     //エンド間の距離を設定
-    aodv.Set("EndDistance", UintegerValue(end_distance));
     aodv.Set("WhMode", UintegerValue(2));  // 0 = 通常ノードのみ、1 = 提案手法のWH攻撃、2 = 既存手法のWH攻撃、3 = 外部WH攻撃
 
     InternetStackHelper stack;

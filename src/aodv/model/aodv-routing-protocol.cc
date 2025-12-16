@@ -1249,6 +1249,11 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
 {
     NS_LOG_FUNCTION(this << dst);
 
+    if(!IsMyOwnAddress(Ipv4Address("10.0.0.1")) || !IsMyOwnAddress(Ipv4Address("10.0.0.4")) || !IsMyOwnAddress(Ipv4Address("10.0.0.6")))
+    {
+        return;
+    }
+
     // A node SHOULD NOT originate more than RREQ_RATELIMIT RREQ messages per second.
     if (m_rreqCount == m_rreqRateLimit)
     {
@@ -1469,7 +1474,16 @@ RoutingProtocol::ScheduleRreqRetry(Ipv4Address dst)
     else
     {
         NS_ABORT_MSG_UNLESS(rt.GetRreqCnt() > 0, "Unexpected value for GetRreqCount ()");
-        uint16_t backoffFactor = rt.GetRreqCnt() - 1;
+        
+        uint8_t rreqCnt = rt.GetRreqCnt();
+        if (rreqCnt == 0)
+        {
+            rreqCnt = 1;
+        }
+
+        uint16_t backoffFactor = std::min<uint16_t>(rreqCnt - 1, 10);
+        //デフォルト
+        // uint16_t backoffFactor = rt.GetRreqCnt() - 1;
         NS_LOG_LOGIC("Applying binary exponential backoff factor " << backoffFactor);
         retry = m_netTraversalTime * (1 << backoffFactor);
     }
@@ -2902,7 +2916,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         m_localGraph[receiver].insert(helloSender);
     }
 
-    if (Simulator::Now() < Seconds(5.0))
+    if (Simulator::Now() < Seconds(3.0))
     {
         NS_LOG_DEBUG("シュミレーション時間が5秒未満です。" << Simulator::Now());
         return;
@@ -3019,7 +3033,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     || receiver == Ipv4Address("10.1.2.2"))
                 {
                     NS_LOG_DEBUG("隣接比率のみの特例ケースにより、WHリンクと判定");
-                    std::ofstream ofs("test.log");
+                    std::ofstream ofs("test.log", std::ios::out | std::ios::app);
                     uint32_t nodeId = GetObject<Node>()->GetId();
 
                     ofs << "隣接比率のみの特例ケースにより、WHリンクと判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -3038,7 +3052,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     //正常ノードをご検知
                     NS_LOG_DEBUG("特例によりご検知");
 
-                    std::ofstream ofs("test.log");
+                    std::ofstream ofs("test.log", std::ios::out | std::ios::app);
                     uint32_t nodeId = GetObject<Node>()->GetId();
 
                     ofs << "特例によりご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -3097,7 +3111,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     {
                         NS_LOG_DEBUG("別経路によりWH攻撃を正常に判定");
 
-                        std::ofstream ofs("test.log");
+                        std::ofstream ofs("test.log", std::ios::out | std::ios::app);
                         uint32_t nodeId = GetObject<Node>()->GetId();
 
                         ofs << "別経路によりWH攻撃を正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -3109,7 +3123,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     }else{
                         NS_LOG_DEBUG("排他的隣接ノード数の別経路により、ご検知");
 
-                        std::ofstream ofs("test.log");
+                        std::ofstream ofs("test.log", std::ios::out | std::ios::app);
                         uint32_t nodeId = GetObject<Node>()->GetId();
 
                         ofs << "排他的隣接ノード数の別経路により、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -3134,7 +3148,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         
         if(isRebroadcasted || receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.1"))
         {
-            std::ofstream ofs("test.log");
+            std::ofstream ofs("test.log", std::ios::out | std::ios::app);
             uint32_t nodeId = GetObject<Node>()->GetId();
 
             ofs << "ステップ2でWHリンクを正常リンクとご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -4016,12 +4030,11 @@ RoutingProtocol::SendAuthPacket(Ipv4Address origin,
 {
     NS_LOG_FUNCTION(this << origin << target);
 
-    m_requestId++;
+    // m_requestId++;
 
-    AuthPacketHeader auth(origin, target, m_requestId);
+    AuthPacketHeader auth(origin, target);
 
-    NS_LOG_DEBUG("メッセージID：" << m_requestId
-                 << "   判定開始ノード：" << origin
+    NS_LOG_DEBUG("   判定開始ノード：" << origin
                  << "が判定対象ノード：" << target
                  << "へ認証メッセージを送信しようとしています。");
 
@@ -4029,7 +4042,7 @@ RoutingProtocol::SendAuthPacket(Ipv4Address origin,
 
     // ★WHに拾わせたいので TTL=1 は禁止（入口WHが受信する前に落ちる可能性）
     SocketIpTtlTag ttl;
-    ttl.SetTtl(2/*std::max<uint8_t>(2, m_netDiameter)*/); // 迷うなら m_netDiameter
+    ttl.SetTtl(std::max<uint8_t>(2, m_netDiameter)); // 迷うなら m_netDiameter
     packet->AddPacketTag(ttl);
 
     // Header を積む順番は今のままでOK（受信側が同じ順で外すなら）
@@ -4532,7 +4545,7 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
         {
             NS_LOG_DEBUG("認証応答メッセージ受信により、WHリンクをご判定");
 
-            std::ofstream ofs("test.log");
+            std::ofstream ofs("test.log", std::ios::out | std::ios::app);
             uint32_t nodeId = GetObject<Node>()->GetId();
 
             ofs << "認証応答メッセージ受信により、WHリンクをご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -4558,7 +4571,7 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
            ||A == Ipv4Address("10.1.2.2"))
         {
             NS_LOG_DEBUG("認証応答メッセージ受信により、WHリンクを正常に判定");
-            std::ofstream ofs("test.log");
+            std::ofstream ofs("test.log", std::ios::out | std::ios::app);
             uint32_t nodeId = GetObject<Node>()->GetId();
 
             ofs << "認証応答メッセージ受信により、WHリンクを正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -4570,7 +4583,7 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
         }else{
             NS_LOG_DEBUG("認証応答メッセージ受信元が異なるため、ご検知");
 
-            std::ofstream ofs("test.log");
+            std::ofstream ofs("test.log", std::ios::out | std::ios::app);
             uint32_t nodeId = GetObject<Node>()->GetId();
 
             ofs << "認証応答メッセージ受信元が異なるため、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -4634,7 +4647,7 @@ RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadc
         {
             NS_LOG_DEBUG("タグによりWHノードを正常ノードとご判定");
 
-            std::ofstream ofs("test.log");
+            std::ofstream ofs("test.log", std::ios::out | std::ios::app);
             uint32_t nodeId = GetObject<Node>()->GetId();
 
             ofs << "タグによりWHノードを正常ノードとご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -4658,7 +4671,7 @@ RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadc
           || A == Ipv4Address("10.1.2.2"))
         {
             NS_LOG_DEBUG("タグによりWHノードを正常に判定");
-            std::ofstream ofs("test.log");
+            std::ofstream ofs("test.log", std::ios::out | std::ios::app);
             uint32_t nodeId = GetObject<Node>()->GetId();
 
             ofs << "タグによりWHノードを正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -4670,7 +4683,7 @@ RoutingProtocol::Step3TimeoutCheck(Ipv4Address A, Ipv4Address B, bool isRebroadc
         }else{
             NS_LOG_DEBUG("共通隣接ノードのタグにより、ご検知");
 
-            std::ofstream ofs("test.log");
+            std::ofstream ofs("test.log", std::ios::out | std::ios::app);
             uint32_t nodeId = GetObject<Node>()->GetId();
 
             ofs << "共通隣接ノードのタグにより、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
@@ -5514,18 +5527,18 @@ RoutingProtocol::HelloTimerExpire()
 {
     NS_LOG_FUNCTION(this);
     Time offset;
-    // if (m_lastBcastTime.IsStrictlyPositive())
-    // {
-    //     offset = Simulator::Now() - m_lastBcastTime;
-    //     NS_LOG_DEBUG("Hello deferred due to last bcast at:" << m_lastBcastTime);
-    // }
-    // else
-    // {
-    //     SendHello();
-    // }
+    if (m_lastBcastTime.IsStrictlyPositive())
+    {
+        offset = Simulator::Now() - m_lastBcastTime;
+        NS_LOG_DEBUG("Hello deferred due to last bcast at:" << m_lastBcastTime);
+    }
+    else
+    {
+        SendHello();
+    }
 
     //強制的にHelloメッセージを送信
-    SendHello();
+    //SendHello();
     m_htimer.Cancel();
     Time diff = m_helloInterval - offset;
     m_htimer.Schedule(std::max(Seconds(0), diff));

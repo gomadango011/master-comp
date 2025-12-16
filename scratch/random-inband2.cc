@@ -148,9 +148,9 @@ main(int argc, char** argv)
 
 //-----------------------------------------------------------------------------
 AodvExample::AodvExample()
-    : size(800),
+    : size(400),
       step(50),
-      totalTime(15),
+      totalTime(10),
       pcap(true),
       printRoutes(true),
       WH_size(300),
@@ -168,7 +168,7 @@ AodvExample::Configure(int argc, char** argv)
     std::random_device randomseed;
     // int rand = randomseed();
 
-    SeedManager::SetSeed(2);
+    SeedManager::SetSeed(3);
 
     CommandLine cmd(__FILE__);
 
@@ -241,8 +241,8 @@ AodvExample::CreateNodes()
     //ノードをランダムに配置
     MobilityHelper mobility;
     mobility.SetPositionAllocator ("ns3::RandomRectanglePositionAllocator",
-                                  "X", StringValue("ns3::UniformRandomVariable[Min=0|Max=1000]"),
-                                  "Y", StringValue("ns3::UniformRandomVariable[Min=0|Max=1000]")
+                                  "X", StringValue("ns3::UniformRandomVariable[Min=0|Max=800]"),
+                                  "Y", StringValue("ns3::UniformRandomVariable[Min=0|Max=800]")
                                  );
 
     mobility.Install(nodes);
@@ -250,7 +250,7 @@ AodvExample::CreateNodes()
     AnimationInterface::SetConstantPosition (nodes.Get (0), 0, 400);
     AnimationInterface::SetConstantPosition (nodes.Get (1), 200, 400);  //WHノード
     AnimationInterface::SetConstantPosition (nodes.Get (2), 600, 400); //WHノード
-    AnimationInterface::SetConstantPosition (nodes.Get (size - 1), 1000, 400);
+    AnimationInterface::SetConstantPosition (nodes.Get (size - 1), 800, 400);
     // AnimationInterface::SetConstantPosition (nodes.Get (4), -20, 20);
     // AnimationInterface::SetConstantPosition (nodes.Get (5), -20, -20);
     // AnimationInterface::SetConstantPosition (nodes.Get (6), 220, 20);
