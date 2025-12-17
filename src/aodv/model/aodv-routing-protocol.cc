@@ -1249,7 +1249,7 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
 {
     NS_LOG_FUNCTION(this << dst);
 
-    if(!IsMyOwnAddress(Ipv4Address("10.0.0.1")) || !IsMyOwnAddress(Ipv4Address("10.0.0.4")) || !IsMyOwnAddress(Ipv4Address("10.0.0.6")))
+    if(!IsMyOwnAddress(Ipv4Address("10.0.0.1")) && !IsMyOwnAddress(Ipv4Address("10.0.0.4")) && !IsMyOwnAddress(Ipv4Address("10.0.0.6")))
     {
         return;
     }
