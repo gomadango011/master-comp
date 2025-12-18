@@ -911,7 +911,7 @@ RoutingProtocol::SetIpv4(Ptr<Ipv4> ipv4)
 void
 RoutingProtocol::NotifyInterfaceUp(uint32_t i)
 {
-    NS_LOG_UNCOND("[CHECK] NotifyInterfaceUp CALLED! i=" << i);
+    // NS_LOG_UNCOND("[CHECK] NotifyInterfaceUp CALLED! i=" << i);
     NS_LOG_FUNCTION(this << m_ipv4->GetAddress(i, 0).GetLocal());
     Ptr<Ipv4L3Protocol> l3 = m_ipv4->GetObject<Ipv4L3Protocol>();
     if (l3->GetNAddresses(i) > 1)
@@ -1495,7 +1495,7 @@ void
 RoutingProtocol::RecvAodv(Ptr<Socket> socket)
 {
     NS_LOG_FUNCTION(this << socket);
-    NS_LOG_UNCOND("RecvAodv called on node " << m_ipv4->GetObject<Node>()->GetId());
+    // NS_LOG_UNCOND("RecvAodv called on node " << m_ipv4->GetObject<Node>()->GetId());
 
     Address sourceAddress;
     Ptr<Packet> packet = socket->RecvFrom(sourceAddress);
@@ -2864,7 +2864,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         const RoutingTableEntry& e = it->second;
         if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
         {
-            NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination());
+            // NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination());
             neighborList.insert(e.GetDestination());
         }
     }
@@ -3701,7 +3701,7 @@ RoutingProtocol::WhTunnelRecv(Ptr<Socket> socket)
     // ★ IdentifyAodvType を用いて AODV タイプを判定
     // -----------------------------------------------
     std::string type = IdentifyAodvType(aodvPkt);
-    NS_LOG_UNCOND("AODV パケットを受信　[WH] IdentifyAodvType(inner) = " << type);
+    // NS_LOG_UNCOND("AODV パケットを受信　[WH] IdentifyAodvType(inner) = " << type);
 
     // ==========================
     // 4. AODV TypeHeader を取得
@@ -5594,8 +5594,8 @@ RoutingProtocol::SendHello()
         const RoutingTableEntry& e = it->second;
         if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
         {
-            NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination() 
-                          << "隣接ノードの隣接ノード数：" << e.GetNeighborCount());
+            // NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination() 
+            //               << "隣接ノードの隣接ノード数：" << e.GetNeighborCount());
             neigborCount++;
             totalNeighborCount += e.GetNeighborCount();
             neighborList.push_back(e.GetDestination());
