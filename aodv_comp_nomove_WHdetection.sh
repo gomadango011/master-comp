@@ -36,35 +36,31 @@ done
 # 新しいディレクトリを作成  p_log(N)
 mkdir -p "$new_dir"
 
-#ノード数とWHリンクの長さを変えながら実行
-for SIZE in "${SIZES[@]}"; do
-    # サイズごとにサブディレクトリを作成
-    # SIZE_DIR="${new_dir}/node_${SIZE}"
-    # mkdir -p "$SIZE_DIR"
 
-    #WHリンクの長さを変更
-    for WH_SIZE in "${WH_SIZES[@]}"; do
-        #WHリンクの長さごとのディレクトリを作成
-        SIZE_DIR="${new_dir}/node_${SIZE}/${SIZE}_WH${WH_SIZE}"
-        mkdir -p "$SIZE_DIR"
+# サイズごとにサブディレクトリを作成
+# SIZE_DIR="${new_dir}/node_${SIZE}"
+# mkdir -p "$SIZE_DIR"
 
-         # 10回シミュレーションを実行
-        for ((i=1; i<=RUN_COUNT; i++)); do
-            echo "Running simulation with size=$SIZE, WHの長さ=$WH_SIZE iteration=$i"
-        
-            #評価結果を出力するファイル名を作成
-            DEF="${SIZE_DIR}/packet_num_${i}.csv"
-            ./ns3 run "${PROGRAM} --size=${SIZE} --WH_size=${WH_SIZE} --time=$TIME --result_file="${DEF}" --iteration=$i > log_node${SIZE}_WH${WH_SIZE}.txt 2>&1"
-        
-            # 実行失敗時のエラーハンドリング
-            if [ $? -ne 0 ]; then
-                echo "Simulation failed for size=$SIZE, iteration=$i"
-                exit 1
-            fi
-        done
-        
+#WHリンクの長さを変更
+for WH_SIZE in "${WH_SIZES[@]}"; do
+    #WHリンクの長さごとのディレクトリを作成
+    SIZE_DIR="${new_dir}/node_400/WH${WH_SIZE}"
+    mkdir -p "$SIZE_DIR"
+
+        # 10回シミュレーションを実行
+    for ((i=1; i<=RUN_COUNT; i++)); do
+        echo "Running simulation with size=$SIZE, WHの長さ=$WH_SIZE iteration=$i"
+    
+        #評価結果を出力するファイル名を作成
+        DEF="${SIZE_DIR}/packet_num_${i}.csv"
+        ./ns3 run "${PROGRAM} --size=400 --WH_size=${WH_SIZE} --time=$TIME --result_file="${DEF}" --iteration=$i > log_node400_WH${WH_SIZE}.txt 2>&1"
+    
+        # 実行失敗時のエラーハンドリング
+        if [ $? -ne 0 ]; then
+            echo "Simulation failed for size=400, iteration=$i"
+            exit 1
+        fi
     done
-
 done
 
 echo "All simulations completed. Results saved in $RESULTS_BASE_DIR."
