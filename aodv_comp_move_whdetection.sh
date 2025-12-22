@@ -53,26 +53,26 @@ for WH in "${WH_SIZES[@]}"; do
   done
 done
 
-# ==========================
-# 2. 正常ノード誤検知率（ノード数 × 待ち時間）
-# ==========================
-for SIZE in "${SIZES[@]}"; do
-  for ((i=1; i<=RUN_COUNT; i++)); do
+# # ==========================
+# # 2. 正常ノード誤検知率（ノード数 × 待ち時間）
+# # ==========================
+# for SIZE in "${SIZES[@]}"; do
+#   for ((i=1; i<=RUN_COUNT; i++)); do
 
-    OUT="${FP_DIR}/fp_nodes${SIZE}_dist600_whL200_seed${i}.csv"
+#     OUT="${FP_DIR}/fp_nodes${SIZE}_dist600_whL200_seed${i}.csv"
 
-    echo "[False Positive] nodes=$SIZE run=$i"
+#     echo "[False Positive] nodes=$SIZE run=$i"
 
-    ./ns3 run "${PROGRAM} \
-      --size=${SIZE} \
-      --WH_size=300 \
-      --end_distance=600 \
-      --time=${TIME} \
-      --iteration=${i} \
-      --result_file=${OUT}" \
-      > "${OUT}.stdout" 2>&1 || exit 1
-  done
-done
+#     ./ns3 run "${PROGRAM} \
+#       --size=${SIZE} \
+#       --WH_size=300 \
+#       --end_distance=600 \
+#       --time=${TIME} \
+#       --iteration=${i} \
+#       --result_file=${OUT}" \
+#       > "${OUT}.stdout" 2>&1 || exit 1
+#   done
+# done
 
 # ==========================
 # 3. 総メッセージサイズ（ノード数）
@@ -95,26 +95,26 @@ done
 #   done
 # done
 
-# ==========================
-# 4. 経路作成時間（距離 × 待ち時間）
-# ==========================
-for DIST in "${END_DISTANCE[@]}"; do
-  for ((i=1; i<=RUN_COUNT; i++)); do
+# # ==========================
+# # 4. 経路作成時間（距離 × 待ち時間）
+# # ==========================
+# for DIST in "${END_DISTANCE[@]}"; do
+#   for ((i=1; i<=RUN_COUNT; i++)); do
 
-    OUT="${RT_DIR}/rt_nodes400_dist${DIST}_whL200_seed${i}.csv"
+#     OUT="${RT_DIR}/rt_nodes400_dist${DIST}_whL200_seed${i}.csv"
 
-    echo "[Route Time] dist=$DIST run=$i"
+#     echo "[Route Time] dist=$DIST run=$i"
 
-    ./ns3 run "${PROGRAM} \
-      --size=400 \
-      --WH_size=300 \
-      --end_distance=${DIST} \
-      --time=${TIME} \
-      --iteration=${i} \
-      --result_file=${OUT}" \
-      > "${OUT}.stdout" 2>&1 || exit 1
-  done
-done
+#     ./ns3 run "${PROGRAM} \
+#       --size=400 \
+#       --WH_size=300 \
+#       --end_distance=${DIST} \
+#       --time=${TIME} \
+#       --iteration=${i} \
+#       --result_file=${OUT}" \
+#       > "${OUT}.stdout" 2>&1 || exit 1
+#   done
+# done
 
 echo "All simulations completed."
 echo "Results saved under results/raw/"

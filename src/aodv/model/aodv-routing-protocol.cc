@@ -2142,6 +2142,12 @@ RoutingProtocol::SendReply(const RreqHeader& rreqHeader, const RoutingTableEntry
                           /*lifetime=*/m_myRouteTimeout,
                           /*メッセージID*/rreqHeader.GetId());
 
+    if(m_blacklist.find(toOrigin.GetNextHop()) != m_blacklist.end())
+    {
+        //ブラックリストに存在しているため送信しない
+        return;
+    }
+
     // //別経路作成用のフラグが立っている場合、RREPにもフラグを立てる
     // if(rreqHeader.GetAnotherRouteCreateFlag())
     // {
@@ -2180,6 +2186,13 @@ RoutingProtocol::SendReplyByIntermediateNode(RoutingTableEntry& toDst,
                           /*sender=*/m_ipv4->GetAddress(1, 0).GetLocal(),
                           /*lifetime=*/toDst.GetLifeTime(),
                           /*メッセージID*/messageID);
+
+    if(m_blacklist.find(toOrigin.GetNextHop()) != m_blacklist.end())
+    {
+        //ブラックリストに存在しているため送信しない
+        return;
+    }
+
     /* If the node we received a RREQ for is a neighbor we are
      * probably facing a unidirectional link... Better request a RREP-ack
      */
@@ -2508,6 +2521,12 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
 
     // センダーを設定
     rrepHeader.SetSender(receiver);
+
+    if(m_blacklist.find(toOrigin.GetNextHop()) != m_blacklist.end())
+    {
+        //ブラックリストに存在しているためRREPを送信しない
+        return;
+    }
 
     SocketIpTtlTag tag;
     p->RemovePacketTag(tag);
@@ -2971,9 +2990,9 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
             }
         }
 
-        //テスト用
-        StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
-        return;
+        // //テスト用
+        // StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
+        // return;
 
         // 排他的隣接ノード数が１以下の場合、例外処理を実行
         if (exclusiveNeighbors.size() < 2)
@@ -3088,7 +3107,9 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         //判定対象ノードの隣接ノードリストの型を変更
         std::set<Ipv4Address> st(targetNeighborList.begin(), targetNeighborList.end());
 
-        int wormholeThreshold = 5;
+        bool getroute = false;
+
+        int wormholeThreshold = 4;
         for (auto oi : exclusiveNeighbors) {
             for (auto oj : exclusiveNeighbors) {
                 if (oi == oj) continue;
@@ -3098,6 +3119,12 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                 NS_LOG_DEBUG("EAノード間のホップ数: oi=" << oi
                                 << " oj=" << oj
                                 << " hop=" << hop);
+                
+                if(hop != -1)
+                {
+                    //1つでも経路を発見した場合，
+                    getroute = true;
+                }
 
                 if (hop >= wormholeThreshold) {
                     NS_LOG_INFO("判定開始ノード：" << receiver << "　判定対象ノード：" << rrepHeader.GetDst() << "　がWH攻撃の影響下にある可能性があります。");
@@ -3137,6 +3164,39 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     return; // wormhole confirmed
                 }
             }
+        }
+
+        if(!getroute)
+        {
+            //ブラックリストに登録
+            m_blacklist.insert(helloSender);
+            if(isRebroadcasted
+            || receiver == Ipv4Address("10.1.2.1")
+            || receiver == Ipv4Address("10.1.2.2"))
+            {
+                std::ofstream ofs("test.log", std::ios::out | std::ios::app);
+                uint32_t nodeId = GetObject<Node>()->GetId();
+
+                ofs << "排他的隣接ノードの別経路が1つも存在しないため、正常に WH 攻撃と判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+                ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+                ofs.close();
+
+                //WHノードを正常に検知
+                m_whStats.detectedWh++;
+
+            }else{
+                std::ofstream ofs("test.log", std::ios::out | std::ios::app);
+                uint32_t nodeId = GetObject<Node>()->GetId();
+
+                ofs << "排他的隣接ノードの別経路が1つも存在しないため、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+                ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+                ofs.close();
+
+                 //正常ノードをWHノードとご検知
+                m_whStats.falsePositive++;
+            }
+
+            return;
         }
 
         //ステップ3に移行
