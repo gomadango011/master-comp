@@ -4543,10 +4543,11 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
             ||A == Ipv4Address("10.1.2.1")
             ||A == Ipv4Address("10.1.2.2"))
         {
-            NS_LOG_DEBUG("認証応答メッセージ受信により、WHリンクをご判定");
+            uint32_t nodeId = GetObject<Node>()->GetId();
+             NS_LOG_DEBUG("認証応答メッセージ受信により、WHリンクをご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << "ターゲットノード：" << B << "  送信者：" << sender);
 
             std::ofstream ofs("test.log", std::ios::out | std::ios::app);
-            uint32_t nodeId = GetObject<Node>()->GetId();
+            
 
             ofs << "認証応答メッセージ受信により、WHリンクをご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
             ofs << "ターゲットノード：" << B << "  送信者：" << sender <<std::endl;
