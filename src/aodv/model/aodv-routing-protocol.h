@@ -360,7 +360,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
         uint32_t messageId;                         // 別経路要求ID
         ns3::Ipv4Address origin;                    // 送信元ノード
         ns3::Ipv4Address target;                    //検知対象ノード
-        std::vector<ns3::Ipv4Address> exNeighborList; // 排他的隣接ノードリスト
+        std::set<ns3::Ipv4Address> exNeighborList; // 排他的隣接ノードリスト
+        std::set<ns3::Ipv4Address> excludedList;    //バイパスするノードリスト
 
         // 各隣接ノードまでのホップ数を保存（key=IP, value=hop数）
         std::map<ns3::Ipv4Address, uint8_t> hopCountMap; 
@@ -462,6 +463,10 @@ class RoutingProtocol : public Ipv4RoutingProtocol
 
     std::map<Ipv4Address, NeighborInfo> m_neighborTable;
 
+    uint32_t m_anotherRouteID;
+
+    std::map<Ipv4Address, uint32_t> m_isExclusiveRreq;
+
   private:
     /// Start protocol operation
     void Start();
@@ -555,7 +560,12 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     void ForwardHelloByIntermediateNode(const RrepHeader& rrepHeader);
 
     //内部WH攻撃　WH攻撃検知開始 →　隣接ノードリスト要求メッセージ送信
-    void SendDetectionReq_to_ExNeighbors(const RrepHeader& rrepHeader, const Ipv4Address receiver);
+    void SendDetectionReq_to_ExNeighbors(const RrepHeader& rrepHeader, const Ipv4Address receiver, const std::set<Ipv4Address> Exneighbors);
+
+    void RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+
+    //排他的隣接ノードがRREQを送信
+    void SendReq_by_Exnode();
 
     //排他的隣接ノードの別経路を計算
     int CalcHopCountBfs(const Ipv4Address &src,

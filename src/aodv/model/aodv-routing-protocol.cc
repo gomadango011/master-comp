@@ -178,7 +178,8 @@ RoutingProtocol::RoutingProtocol()
       m_htimer(Timer::CANCEL_ON_DESTROY),
       m_rreqRateLimitTimer(Timer::CANCEL_ON_DESTROY),
       m_rerrRateLimitTimer(Timer::CANCEL_ON_DESTROY),
-      m_lastBcastTime()
+      m_lastBcastTime(),
+      m_anotherRouteID(0)
 {
     m_nb.SetCallback(MakeCallback(&RoutingProtocol::SendRerrWhenBreaksLinkToNextHop, this));
 }
@@ -1249,6 +1250,7 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
 {
     NS_LOG_FUNCTION(this << dst);
 
+    //排他的隣接ノードじゃない，RREQの送信元ノードではない場合、破棄
     if(!IsMyOwnAddress(Ipv4Address("10.0.0.1")) && !IsMyOwnAddress(Ipv4Address("10.0.0.4")) && !IsMyOwnAddress(Ipv4Address("10.0.0.6")))
     {
         return;
@@ -1260,7 +1262,8 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
         Simulator::Schedule(m_rreqRateLimitTimer.GetDelayLeft() + MicroSeconds(100),
                             &RoutingProtocol::SendRequest,
                             this,
-                            dst);
+                            dst
+                            );
         return;
     }
     else
@@ -1340,7 +1343,7 @@ RoutingProtocol::SendRequest(Ipv4Address dst)
     m_requestId++;
     rreqHeader.SetId(m_requestId);
 
-    
+    //別経路構築フラグと，バイパスリストをRREQに追加
 
     // if(Anothorflag)
     // {
@@ -2907,7 +2910,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
     }
 
     // ----- NB: B の 1-hop 隣接集合（Hello に含まれる neighborList） -----
-    std::vector<Ipv4Address> targetNeighborVec = rrepHeader.GetNeighborList();
+    std::set<Ipv4Address> targetNeighborVec = rrepHeader.GetNeighborList();
     std::set<Ipv4Address> NB(targetNeighborVec.begin(), targetNeighborVec.end());
 
     Ipv4Address helloSender = rrepHeader.GetDst();
@@ -2953,21 +2956,42 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     || receiver == Ipv4Address("10.1.2.1")
                     || receiver == Ipv4Address("10.1.2.2")
           )
-        {
-            NS_LOG_DEBUG("WHリンクの隣接ノード比率：" << rB);
-        }
-
-    //受信したhelloパケットの隣接ノード比率が閾値を上回る場合、WH攻撃検知を開始
-    if(rB > m_whNeighborThreshold)
     {
-        NS_LOG_DEBUG("受信したHelloメッセージの隣接ノード数が閾値を上回りました。WH攻撃検知を開始します。 ノード: " << receiver << "判定対象" << rrepHeader.GetDst()
-                        << "隣接ノード比率" << rB);
-        
+        NS_LOG_DEBUG("WHリンクの隣接ノード比率：" << rB);
+    }
+    
+    double myNeighborCount = static_cast<double>(neighborList.size());
+    double sumNeighborCount = 0.0;  //Aの隣接ノードの隣接ノード数
+    uint32_t validNeighborNum = 0;  //Aの隣接ノード数
+
+    for (const auto &n : neighborList)
+    {
+        RoutingTableEntry nEntry;
+        if (m_routingTable.LookupRoute(n, nEntry))
+        {
+            // Hello で受け取って RoutingTableEntry に保存している
+            // 「隣接ノード数」を利用する
+            sumNeighborCount += static_cast<double>(nEntry.GetNeighborCount());
+            validNeighborNum++;
+        }
+    }
+
+    //Aの隣接ノード数 > 0 && Aの隣接ノードの隣接ノード数 > 0の場合、Aの隣接ノード平均隣接ノードを計算
+    double avgNeighborCount = (validNeighborNum > 0 && sumNeighborCount > 0.0)
+                                ? (sumNeighborCount / static_cast<double>(validNeighborNum))
+                                : 0.0;
+    //Aの隣接ノードの平均隣接ノード数 > 0 の場合、隣接ノードしきい値を計算
+    double rA = (avgNeighborCount > 0.0)
+                    ? (validNeighborNum / avgNeighborCount)
+                    : 0.0;
+
+    //今日ノードの隣接ノード比率が閾値以下の場合，ステップ2を開始
+    if(rB > m_whNeighborThreshold && rA > m_whNeighborThreshold)
+    {    
         //排他的隣接ノードリストと共通隣接ノードリストを作成
         std::set<Ipv4Address> exclusiveNeighbors;   //排他的隣接ノードリスト
         std::set<Ipv4Address> commonNeighbors;
-        std::vector<Ipv4Address> targetNeighborList = rrepHeader.GetNeighborList(); //検知対象ノードの隣接ノードリスト
-
+        
         //排他的隣接ノードリストと共通隣接ノードリストを作成
         for (const auto& n : m_localGraph[receiver])
         {
@@ -2990,40 +3014,11 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
             }
         }
 
-        // //テスト用
-        // StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
-        // return;
-
         // 排他的隣接ノード数が１以下の場合、例外処理を実行
         if (exclusiveNeighbors.size() < 2)
         {
             NS_LOG_DEBUG("排他的隣接ノード数が 2 未満のため、しきい値ベースの検知を開始"
                             << " eA = " << exclusiveNeighbors.size());
-
-            double myNeighborCount = static_cast<double>(neighborList.size());
-            double sumNeighborCount = 0.0;  //Aの隣接ノードの隣接ノード数
-            uint32_t validNeighborNum = 0;  //Aの隣接ノード数
-
-            for (const auto &n : neighborList)
-            {
-                RoutingTableEntry nEntry;
-                if (m_routingTable.LookupRoute(n, nEntry))
-                {
-                    // Hello で受け取って RoutingTableEntry に保存している
-                    // 「隣接ノード数」を利用する
-                    sumNeighborCount += static_cast<double>(nEntry.GetNeighborCount());
-                    validNeighborNum++;
-                }
-            }
-
-            //Aの隣接ノード数 > 0 && Aの隣接ノードの隣接ノード数 > 0の場合、Aの隣接ノード平均隣接ノードを計算
-            double avgNeighborCount = (validNeighborNum > 0 && sumNeighborCount > 0.0)
-                                      ? (sumNeighborCount / static_cast<double>(validNeighborNum))
-                                      : 0.0;
-            //Aの隣接ノードの平均隣接ノード数 > 0 の場合、隣接ノードしきい値を計算
-            double rA = (avgNeighborCount > 0.0)
-                            ? (myNeighborCount / avgNeighborCount)
-                            : 0.0;
 
             if(rA <= 0.0)
             {
@@ -3097,132 +3092,139 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                 StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
                 return;
             }
+
+            
         }
 
-        // ========== 2. sender(B) の neighbor list を保存 ==========
-        //vector ⇨ set
-        std::set<Ipv4Address> NList(targetNeighborList.begin(), targetNeighborList.end());
-        m_localGraph[helloSender] = NList;
-
-        //判定対象ノードの隣接ノードリストの型を変更
-        std::set<Ipv4Address> st(targetNeighborList.begin(), targetNeighborList.end());
-
-        bool getroute = false;
-
-        int wormholeThreshold = 4;
-        for (auto oi : exclusiveNeighbors) {
-            for (auto oj : exclusiveNeighbors) {
-                if (oi == oj) continue;
-
-                //排他的隣接ノードの別経路を計算
-                int hop = CalcHopCountBfs(oi, oj, st);
-                NS_LOG_DEBUG("EAノード間のホップ数: oi=" << oi
-                                << " oj=" << oj
-                                << " hop=" << hop);
-                
-                if(hop != -1)
-                {
-                    //1つでも経路を発見した場合，
-                    getroute = true;
-                }
-
-                if (hop >= wormholeThreshold) {
-                    NS_LOG_INFO("判定開始ノード：" << receiver << "　判定対象ノード：" << rrepHeader.GetDst() << "　がWH攻撃の影響下にある可能性があります。");
-                    
-                    //ブラックリストに登録
-                    m_blacklist.insert(helloSender);
-
-                    if(isRebroadcasted
-                    || receiver == Ipv4Address("10.1.2.1")
-                    || receiver == Ipv4Address("10.1.2.2"))
-                    {
-                        NS_LOG_DEBUG("別経路によりWH攻撃を正常に判定");
-
-                        std::ofstream ofs("test.log", std::ios::out | std::ios::app);
-                        uint32_t nodeId = GetObject<Node>()->GetId();
-
-                        ofs << "別経路によりWH攻撃を正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
-                        ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
-                        ofs.close();
-                        
-                        //WHノードを正常に検知
-                        m_whStats.detectedWh++;
-                    }else{
-                        NS_LOG_DEBUG("排他的隣接ノード数の別経路により、ご検知");
-
-                        std::ofstream ofs("test.log", std::ios::out | std::ios::app);
-                        uint32_t nodeId = GetObject<Node>()->GetId();
-
-                        ofs << "排他的隣接ノード数の別経路により、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
-                        ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
-                        ofs.close();
-
-                        //正常ノードをWHノードとご検知
-                        m_whStats.falsePositive++;
-                    }
-
-                    return; // wormhole confirmed
-                }
-            }
-        }
-
-        if(!getroute)
-        {
-            //ブラックリストに登録
-            m_blacklist.insert(helloSender);
-            if(isRebroadcasted
-            || receiver == Ipv4Address("10.1.2.1")
-            || receiver == Ipv4Address("10.1.2.2"))
-            {
-                std::ofstream ofs("test.log", std::ios::out | std::ios::app);
-                uint32_t nodeId = GetObject<Node>()->GetId();
-
-                ofs << "排他的隣接ノードの別経路が1つも存在しないため、正常に WH 攻撃と判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
-                ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
-                ofs.close();
-
-                //WHノードを正常に検知
-                m_whStats.detectedWh++;
-
-            }else{
-                std::ofstream ofs("test.log", std::ios::out | std::ios::app);
-                uint32_t nodeId = GetObject<Node>()->GetId();
-
-                ofs << "排他的隣接ノードの別経路が1つも存在しないため、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
-                ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
-                ofs.close();
-
-                 //正常ノードをWHノードとご検知
-                m_whStats.falsePositive++;
-            }
-
-            return;
-        }
-
-        //ステップ3に移行
-        NS_LOG_DEBUG("ステップ2では異常がありませんでした。ステップ3に移行します。");
-        StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
-
+        //別経路要求メッセージを送信
+        SendDetectionReq_to_ExNeighbors(rrepHeader, receiver, exclusiveNeighbors);
     }else{
-        NS_LOG_DEBUG("隣接ノード比率が閾値以下のため判定不要　　隣接ノード比率"<< rB << "　　送信元ノード：" << rrepHeader.GetDst());
-        
-        if(isRebroadcasted || receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.1"))
-        {
-            std::ofstream ofs("test.log", std::ios::out | std::ios::app);
-            uint32_t nodeId = GetObject<Node>()->GetId();
-
-            ofs << "ステップ2でWHリンクを正常リンクとご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
-            ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
-            ofs.close();
-
-            NS_LOG_DEBUG("WHリンクを正常リンクとご判定");
-            m_whStats.undetectedWh ++;
-        }else{
-            m_whStats.truenegative++;
-        }
+        //正常ノードと判定
     }
 
-    return;
+    //     // ========== 2. sender(B) の neighbor list を保存 ==========
+    //     //vector ⇨ set
+    //     std::set<Ipv4Address> NList(targetNeighborList.begin(), targetNeighborList.end());
+    //     m_localGraph[helloSender] = NList;
+
+    //     //判定対象ノードの隣接ノードリストの型を変更
+    //     std::set<Ipv4Address> st(targetNeighborList.begin(), targetNeighborList.end());
+
+    //     bool getroute = false;
+
+    //     int wormholeThreshold = 4;
+    //     for (auto oi : exclusiveNeighbors) {
+    //         for (auto oj : exclusiveNeighbors) {
+    //             if (oi == oj) continue;
+
+    //             //排他的隣接ノードの別経路を計算
+    //             int hop = CalcHopCountBfs(oi, oj, st);
+    //             NS_LOG_DEBUG("EAノード間のホップ数: oi=" << oi
+    //                             << " oj=" << oj
+    //                             << " hop=" << hop);
+                
+    //             if(hop != -1)
+    //             {
+    //                 //1つでも経路を発見した場合，
+    //                 getroute = true;
+    //             }
+
+    //             if (hop >= wormholeThreshold) {
+    //                 NS_LOG_INFO("判定開始ノード：" << receiver << "　判定対象ノード：" << rrepHeader.GetDst() << "　がWH攻撃の影響下にある可能性があります。");
+                    
+    //                 //ブラックリストに登録
+    //                 m_blacklist.insert(helloSender);
+
+    //                 if(isRebroadcasted
+    //                 || receiver == Ipv4Address("10.1.2.1")
+    //                 || receiver == Ipv4Address("10.1.2.2"))
+    //                 {
+    //                     NS_LOG_DEBUG("別経路によりWH攻撃を正常に判定");
+
+    //                     std::ofstream ofs("test.log", std::ios::out | std::ios::app);
+    //                     uint32_t nodeId = GetObject<Node>()->GetId();
+
+    //                     ofs << "別経路によりWH攻撃を正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+    //                     ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+    //                     ofs.close();
+                        
+    //                     //WHノードを正常に検知
+    //                     m_whStats.detectedWh++;
+    //                 }else{
+    //                     NS_LOG_DEBUG("排他的隣接ノード数の別経路により、ご検知");
+
+    //                     std::ofstream ofs("test.log", std::ios::out | std::ios::app);
+    //                     uint32_t nodeId = GetObject<Node>()->GetId();
+
+    //                     ofs << "排他的隣接ノード数の別経路により、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+    //                     ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+    //                     ofs.close();
+
+    //                     //正常ノードをWHノードとご検知
+    //                     m_whStats.falsePositive++;
+    //                 }
+
+    //                 return; // wormhole confirmed
+    //             }
+    //         }
+    //     }
+
+    //     if(!getroute)
+    //     {
+    //         //ブラックリストに登録
+    //         m_blacklist.insert(helloSender);
+    //         if(isRebroadcasted
+    //         || receiver == Ipv4Address("10.1.2.1")
+    //         || receiver == Ipv4Address("10.1.2.2"))
+    //         {
+    //             std::ofstream ofs("test.log", std::ios::out | std::ios::app);
+    //             uint32_t nodeId = GetObject<Node>()->GetId();
+
+    //             ofs << "排他的隣接ノードの別経路が1つも存在しないため、正常に WH 攻撃と判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+    //             ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+    //             ofs.close();
+
+    //             //WHノードを正常に検知
+    //             m_whStats.detectedWh++;
+
+    //         }else{
+    //             std::ofstream ofs("test.log", std::ios::out | std::ios::app);
+    //             uint32_t nodeId = GetObject<Node>()->GetId();
+
+    //             ofs << "排他的隣接ノードの別経路が1つも存在しないため、ご検知  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+    //             ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+    //             ofs.close();
+
+    //              //正常ノードをWHノードとご検知
+    //             m_whStats.falsePositive++;
+    //         }
+
+    //         return;
+    //     }
+
+    //     //ステップ3に移行
+    //     NS_LOG_DEBUG("ステップ2では異常がありませんでした。ステップ3に移行します。");
+    //     StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
+
+    // }else{
+    //     NS_LOG_DEBUG("隣接ノード比率が閾値以下のため判定不要　　隣接ノード比率"<< rB << "　　送信元ノード：" << rrepHeader.GetDst());
+        
+    //     if(isRebroadcasted || receiver == Ipv4Address("10.1.2.1") || receiver == Ipv4Address("10.1.2.1"))
+    //     {
+    //         std::ofstream ofs("test.log", std::ios::out | std::ios::app);
+    //         uint32_t nodeId = GetObject<Node>()->GetId();
+
+    //         ofs << "ステップ2でWHリンクを正常リンクとご判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+    //         ofs << "ターゲットノード：" << helloSender << "隣接ノード比率：" << rB <<std::endl;
+    //         ofs.close();
+
+    //         NS_LOG_DEBUG("WHリンクを正常リンクとご判定");
+    //         m_whStats.undetectedWh ++;
+    //     }else{
+    //         m_whStats.truenegative++;
+    //     }
+    // }
+
 }
 
 
@@ -5104,179 +5106,237 @@ RoutingProtocol::SendStep3Result(Ipv4Address origin,
 }
 
 
-// //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
-// void
-// RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, const Ipv4Address receiver)
-// {
+//WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
+void
+RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, const Ipv4Address receiver, const std::set<Ipv4Address> Exneighbors)
+{
     
-//     NS_LOG_FUNCTION(this);
-//     //ここにNeighbor List Requestメッセージの生成と送信コードを追加
-//     NS_LOG_DEBUG("排他的隣接ノードを作成し検知対象ノード（" << rrepHeader.GetDst() << "）へ、別経路作成用のRequestメッセージを送信します。");
+    NS_LOG_FUNCTION(this);
+    //ここにNeighbor List Requestメッセージの生成と送信コードを追加
+    NS_LOG_DEBUG("排他的隣接ノードを作成し検知対象ノード（" << rrepHeader.GetDst() << "）へ、別経路作成用のRequestメッセージを送信します。");
 
+    std::set<Ipv4Address> targetNeighborList = rrepHeader.GetNeighborList(); //検知対象ノードの隣接ノードリスト
 
-//     //排他的隣接ノードリストを作成
-//     std::vector<Ipv4Address> exclusiveNeighbors;   //排他的隣接ノードリスト
-//     std::vector<Ipv4Address> targetNeighborList = rrepHeader.GetNeighborList(); //検知対象ノードの隣接ノードリスト
+    //ノードIDと排他的隣接ノードのリスト、それぞれの隣接ノードの検知結果を保存する構造体を作成
 
-//     for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
-//      it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
-//     {
-//         const RoutingTableEntry& e = it->second;
-//         if (e.GetHop() == 1 && e.GetFlag() == VALID)
-//         {
-//             //自身の隣接ノードであり、検知対象ノードの隣接ノードではない場合、排他的隣接ノードとしてリストに追加
-//             auto result = std::find(targetNeighborList.begin(), targetNeighborList.end(), e.GetDestination());
-//             if(result == targetNeighborList.end())
-//             {
-//                 NS_LOG_DEBUG("排他的隣接ノードを追加: " << e.GetDestination());
-//                 exclusiveNeighbors.push_back(e.GetDestination());
-//             }
-            
-//         }
-//     }
+    m_anotherRouteID++;
 
-//     //ノードIDと排他的隣接ノードのリスト、それぞれの隣接ノードの検知結果を保存する構造体を作成
+    for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
+    {
+        Ptr<Socket> socket = j->first;
+        Ipv4InterfaceAddress iface = j->second;
 
-//     uint32_t myid = m_anotherRouteID++;
-
-//     // //排他的隣接ノードに別経路を構築してもらうためのRequestメッセージを送信
-//     for(auto it = exclusiveNeighbors.begin(); it != exclusiveNeighbors.end(); ++it)
-//     {
-//         Ipv4Address exNeighbor = *it;
-//         NS_LOG_DEBUG("排他的隣接ノード" << exNeighbor << "に別経路構築用のRequestメッセージを送信します。");
-
-//         DetectionRreqHeader DetectionRreqHeader(
-//             /*別経路要求ID*/myid,
-//             /*送信元アドレス*/receiver,
-//             /*検知対象アドレス*/rrepHeader.GetDst(),
-//             /*排他的隣接ノードリスト*/exclusiveNeighbors,
-//             /*検知対象ノードの隣接ノードリスト*/targetNeighborList
-//         );
-
-//         Ptr<Packet> packet = Create<Packet>();
-//         SocketIpTtlTag tag;
-//         tag.SetTtl(1);
-//         packet->AddPacketTag(tag);
-//         packet->AddHeader(DetectionRreqHeader);
-//         TypeHeader tHeader(AODVTYPE_DetectionReq);
-//         packet->AddHeader(tHeader);
-
-//         // ★ receiver(=この関数を呼んだ時にHelloを受け取った自ノードのIP)のIFで送る
-//         int32_t ifIndex = m_ipv4->GetInterfaceForAddress(receiver);
-//         if (ifIndex < 0)
-//         {
-//             NS_LOG_ERROR("No interface found for receiver=" << receiver
-//                          << " at node " << m_ipv4->GetObject<Node>()->GetId());
-//             continue;
-//         }
-//         Ipv4InterfaceAddress outIf = m_ipv4->GetAddress(static_cast<uint32_t>(ifIndex), 0);
-//         Ptr<Socket> socket = FindSocketWithInterfaceAddress(outIf);
-
-//         //Ptr<Socket> socket = FindSocketWithInterfaceAddress(m_ipv4->GetAddress(m_ipv4->GetInterfaceForAddress(exNeighbor), 0));
-//         NS_ASSERT(socket);
-//         socket->SendTo(packet, 0, InetSocketAddress(exNeighbor, AODV_PORT));
-//     }
-
-// }
-
-// //別経路要求メッセージを受信した場合の処理
-// void
-// RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
-// {
-//     NS_LOG_FUNCTION(this);
-//     DetectionRreqHeader detectionrq;
-//     p->RemoveHeader(detectionrq);
-//     NS_LOG_DEBUG("（" << src << "）⇨（" << receiver
-//                  << "） 検知対象=" << detectionrq.GetTarget()
-//                  << " の別経路要求(DetectionReq)を受信");
-//     std::vector<Ipv4Address> excludedList = detectionrq.GetTargetNeighborList();
-//     excludedList.push_back(detectionrq.GetTarget());
-
-//     DetectionReqEntry entry;
-//     entry.messageId = detectionrq.GetAnotherRouteID();
-//     entry.origin = detectionrq.GetOrigin();
-//     entry.exNeighborList = detectionrq.GetExneighborList();
-//     entry.target = detectionrq.GetTarget();
-
-//     // まず初期状態ではホップ数未計測（例: 255）
-//     for (auto addr : entry.exNeighborList)
-//     {
-//         entry.hopCountMap[addr] = 255;
-//     }
-
-//     m_detectionReqCache[entry.messageId] = entry;
-
-//     //自ノード以外の排他的隣接ノードに別経路要求メッセージを送信
-//     for(auto dst : detectionrq.GetExneighborList())
-//     {
-//         if(dst == receiver)
-//         {
-//             continue;
-//         }
-
-//         NS_LOG_DEBUG("EAノード(" << receiver << ") → " << dst
-//                      << " に別経路RREQを送信 (SendRequest使用)");
-
-//         // --- 一時的に別経路RREQを構築・送信 ---
-//         // SendRequest(dst, /*isAltRoute=*/true, excludedList, entry.messageId);
-
-//     //     // RREQを設定
-//     //     //メッセージヘッダを作成
-//     //     RreqHeader rreqHeader;
-//     //     rreqHeader.SetDstSeqno(0);
-//     //     rreqHeader.SetHopCount(0);
-//     //     rreqHeader.SetOrigin(receiver);
-//     //     rreqHeader.SetGratuitousRrep(false);
-//     //     rreqHeader.SetDestinationOnly(true);
-//     //     rreqHeader.SetUnknownSeqno(true);
-//     //     rreqHeader.SetAnotherRouteCreateFlag(true);
-//     //     rreqHeader.SetExcludedList(excludedList);
-//     //     rreqHeader.SetDst(dst);
-//     //     //RREQIDを設定
-//     //     rreqHeader.SetId(m_requestId++);
-
-//     //     Ptr<Packet> packet = Create<Packet>();
-//     //     SocketIpTtlTag tag;
-//     //     tag.SetTtl(5);
-//     //     packet->AddPacketTag(tag);
-//     //     packet->AddHeader(rreqHeader);
-//     //     TypeHeader tHeader(AODVTYPE_RREQ);
-//     //     packet->AddHeader(tHeader);
-
-//     //     //別経路作成用のRREQをブロードキャスト
-//     //     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
-//     //     {
-//     //         Ptr<Socket> socket = j->first;
-//     //         Ipv4InterfaceAddress iface = j->second;
-
-//     //         rreqHeader.SetOrigin(iface.GetLocal());
-//     //         Ipv4Address destination;
-//     //         if (iface.GetMask() == Ipv4Mask::GetOnes())
-//     //         {
-//     //             destination = Ipv4Address("255.255.255.255");
-//     //         }
-//     //         else
-//     //         {
-//     //             destination = iface.GetBroadcast();
-//     //         }
-
-//     //         NS_LOG_DEBUG("別経路RREQを送信： " << iface.GetLocal()
-//     //                      << " -> " << destination
-//     //                      << " (宛先EA=" << dst << ") TTL=5");
-            
-//     //         //socket->SetIpTtl(5); // ★確実なTTL制御
-            
-//     //         m_lastBcastTime = Simulator::Now();
-//     //         Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
-//     //                         &RoutingProtocol::SendTo,
-//     //                         this,
-//     //                         socket,
-//     //                         packet,
-//     //                         destination);
-//     //     }
+        DetectionRreqHeader DetectionRreqHeader(
+            /*送信元アドレス*/receiver,
+            /*検知対象アドレス*/rrepHeader.GetDst(),
+            /*別経路要求ID*/m_anotherRouteID,
+            /*排他的隣接ノードリスト*/Exneighbors,
+            /*検知対象ノードの隣接ノードリスト*/targetNeighborList
+        );
         
-//     }
-// }
+        Ptr<Packet> packet = Create<Packet>();
+        SocketIpTtlTag tag;
+        tag.SetTtl(1);
+        packet->AddPacketTag(tag);
+        packet->AddHeader(DetectionRreqHeader);
+        TypeHeader tHeader(AODVTYPE_DetecReq);
+        packet->AddHeader(tHeader);
+        // Send to all-hosts broadcast if on /32 addr, subnet-directed otherwise
+        Ipv4Address destination;
+        if (iface.GetMask() == Ipv4Mask::GetOnes())
+        {
+            destination = Ipv4Address("255.255.255.255");
+        }
+        else
+        {
+            destination = iface.GetBroadcast();
+        }
+        Time jitter = MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10));
+        Simulator::Schedule(jitter, &RoutingProtocol::SendTo, this, socket, packet, destination);
+    }
+
+    //ステップ2の検知メッセージをすべて受信できなかった場合タイマを設定
+
+}
+
+//別経路要求メッセージを受信した場合の処理
+void
+RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
+{
+    NS_LOG_FUNCTION(this);
+    DetectionRreqHeader detectionrq;
+    p->RemoveHeader(detectionrq);
+    NS_LOG_DEBUG("（" << src << "）⇨（" << receiver
+                 << "） 検知対象=" << detectionrq.GetTarget()
+                 << " の別経路要求(DetectionReq)を受信");
+    std::set<Ipv4Address> excludedList = detectionrq.GetTargetNeighborList();
+    excludedList.insert(detectionrq.GetTarget());
+
+    DetectionReqEntry entry;
+    entry.messageId = detectionrq.GetID();
+    entry.origin = detectionrq.GetOrigin();
+    entry.exNeighborList = detectionrq.GetExclusiveNeighbors();
+    entry.excludedList = excludedList; //バイパスノードリスト
+    entry.target = detectionrq.GetTarget();
+
+    // まず初期状態ではホップ数未計測（例: 255）
+    for (auto addr : entry.exNeighborList)
+    {
+        entry.hopCountMap[addr] = 255;
+    }
+
+    m_detectionReqCache[entry.messageId] = entry;
+
+    //自ノード以外の排他的隣接ノードに別経路要求メッセージを送信
+    for(auto dst : detectionrq.GetExclusiveNeighbors())
+    {
+        if(dst == receiver)
+        {
+            continue;
+        }
+
+        NS_LOG_DEBUG("EAノード(" << receiver << ") → " << dst
+                     << " に別経路RREQを送信 (SendRequest使用)");
+
+        m_isExclusiveRreq[dst] = entry.messageId;
+
+        //排他的隣接ノードがRREQを送信（最大7ホップ）
+        RreqHeader rreqHeader;
+        rreqHeader.SetDst(dst);
+
+        uint16_t ttl = 7;
+
+        //ルーチングテーブルの確認
+        RoutingTableEntry rt;
+        if(!m_routingTable.LookupRoute(dst,rt))
+        {
+            rreqHeader.SetUnknownSeqno(true);
+            Ptr<NetDevice> dev = nullptr;
+            RoutingTableEntry newEntry(/*dev=*/dev,
+                                   /*dst=*/dst,
+                                   /*vSeqNo=*/false,
+                                   /*seqNo=*/0,
+                                   /*iface=*/Ipv4InterfaceAddress(),
+                                   /*hops=*/ttl,
+                                   /*nextHop=*/Ipv4Address(),
+                                   /*lifetime=*/m_pathDiscoveryTime);
+
+            newEntry.SetFlag(IN_SEARCH);
+            m_routingTable.AddRoute(newEntry);
+        }
+
+        rreqHeader.SetDestinationOnly(true);
+
+        m_seqNo++;
+        rreqHeader.SetOriginSeqno(m_seqNo);
+        m_requestId++;
+        rreqHeader.SetId(m_requestId);
+        rreqHeader.SetAnotherRouteCreateFlag(1);
+        rreqHeader.SetExcludedList(excludedList);
+        rreqHeader.SetDetectionReqID(detectionrq.GetID());
+        rreqHeader.SetDetection_Origin(detectionrq.GetOrigin());
+        rreqHeader.SetWHForwardFlag(false);
+
+        rreqHeader.SetDstSeqno(0);
+        rreqHeader.SetHopCount(0);
+
+        // Send RREQ as subnet directed broadcast from each interface used by aodv
+    for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
+    {
+        Ptr<Socket> socket = j->first;
+        Ipv4InterfaceAddress iface = j->second;
+
+        rreqHeader.SetOrigin(iface.GetLocal());
+        rreqHeader.SetSender(iface.GetLocal());
+        m_rreqIdCache.IsDuplicate(iface.GetLocal(), m_requestId);
+
+        Ptr<Packet> packet = Create<Packet>();
+        SocketIpTtlTag tag;
+        tag.SetTtl(ttl);
+        packet->AddPacketTag(tag);
+        packet->AddHeader(rreqHeader);
+        TypeHeader tHeader(AODVTYPE_RREQ);
+        packet->AddHeader(tHeader);
+        // Send to all-hosts broadcast if on /32 addr, subnet-directed otherwise
+        Ipv4Address destination;
+        if (iface.GetMask() == Ipv4Mask::GetOnes())
+        {
+            destination = Ipv4Address("255.255.255.255");
+        }
+        else
+        {
+            destination = iface.GetBroadcast();
+        }
+        NS_LOG_DEBUG("Send RREQ with id " << rreqHeader.GetId() << " to socket");
+        m_lastBcastTime = Simulator::Now();
+        Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
+                            &RoutingProtocol::SendTo,
+                            this,
+                            socket,
+                            packet,
+                            destination);
+    }
+
+        // --- 一時的に別経路RREQを構築・送信 ---
+        // SendRequest(dst, /*isAltRoute=*/true, excludedList, entry.messageId);
+
+    //     // RREQを設定
+    //     //メッセージヘッダを作成
+    //     RreqHeader rreqHeader;
+    //     rreqHeader.SetDstSeqno(0);
+    //     rreqHeader.SetHopCount(0);
+    //     rreqHeader.SetOrigin(receiver);
+    //     rreqHeader.SetGratuitousRrep(false);
+    //     rreqHeader.SetDestinationOnly(true);
+    //     rreqHeader.SetUnknownSeqno(true);
+    //     rreqHeader.SetAnotherRouteCreateFlag(true);
+    //     rreqHeader.SetExcludedList(excludedList);
+    //     rreqHeader.SetDst(dst);
+    //     //RREQIDを設定
+    //     rreqHeader.SetId(m_requestId++);
+
+    //     Ptr<Packet> packet = Create<Packet>();
+    //     SocketIpTtlTag tag;
+    //     tag.SetTtl(5);
+    //     packet->AddPacketTag(tag);
+    //     packet->AddHeader(rreqHeader);
+    //     TypeHeader tHeader(AODVTYPE_RREQ);
+    //     packet->AddHeader(tHeader);
+
+    //     //別経路作成用のRREQをブロードキャスト
+    //     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
+    //     {
+    //         Ptr<Socket> socket = j->first;
+    //         Ipv4InterfaceAddress iface = j->second;
+
+    //         rreqHeader.SetOrigin(iface.GetLocal());
+    //         Ipv4Address destination;
+    //         if (iface.GetMask() == Ipv4Mask::GetOnes())
+    //         {
+    //             destination = Ipv4Address("255.255.255.255");
+    //         }
+    //         else
+    //         {
+    //             destination = iface.GetBroadcast();
+    //         }
+
+    //         NS_LOG_DEBUG("別経路RREQを送信： " << iface.GetLocal()
+    //                      << " -> " << destination
+    //                      << " (宛先EA=" << dst << ") TTL=5");
+            
+    //         //socket->SetIpTtl(5); // ★確実なTTL制御
+            
+    //         m_lastBcastTime = Simulator::Now();
+    //         Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
+    //                         &RoutingProtocol::SendTo,
+    //                         this,
+    //                         socket,
+    //                         packet,
+    //                         destination);
+    //     }
+        
+    }
+}
 
 // //内部WH攻撃 helloメッセージ転送関数（中継ノード用）
 // void
@@ -5541,7 +5601,7 @@ RoutingProtocol::RecvError(Ptr<Packet> p, Ipv4Address src, bool fromWh)
 
 
 void
-RoutingProtocol::RouteRequestTimerExpire(Ipv4Address dst)
+RoutingProtocol::RouteRequestTimerExpire(Ipv4Address dst )
 {
     NS_LOG_LOGIC(this);
     RoutingTableEntry toDst;
@@ -5647,7 +5707,7 @@ RoutingProtocol::SendHello()
     
     //隣接ノード数の平均隣接ノード数と、自身の隣接ノードをリストアップ
     double totalNeighborCount = 0;  //全隣接ノードの隣接ノード数の合計
-    std::vector<Ipv4Address> neighborList; //自身の隣接ノードリスト
+    std::set<Ipv4Address> neighborList; //自身の隣接ノードリスト
 
     for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
      it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
@@ -5659,7 +5719,7 @@ RoutingProtocol::SendHello()
             //               << "隣接ノードの隣接ノード数：" << e.GetNeighborCount());
             neigborCount++;
             totalNeighborCount += e.GetNeighborCount();
-            neighborList.push_back(e.GetDestination());
+            neighborList.insert(e.GetDestination());
         }
     }
 

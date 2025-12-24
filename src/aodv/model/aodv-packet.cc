@@ -74,7 +74,8 @@ TypeHeader::Deserialize(Buffer::Iterator start)
     case AODVTYPE_VSR: 
     case AODVTYPE_AUTH :
     case AODVTYPE_AUTHREP :
-    case AODVTYPE_STEP3RESULT: {
+    case AODVTYPE_STEP3RESULT: 
+    case AODVTYPE_DetecReq:{
         m_type = (MessageType)type;
         break;
     }
@@ -120,6 +121,10 @@ TypeHeader::Print(std::ostream& os) const
      {
         os << "共通隣接ノードの監視結果メッセージヘッダ";
      }
+    case AODVTYPE_DetecReq:
+    {
+        os << "別経路要求メッセージヘッダ";
+    }
     default:
         os << "UNKNOWN_TYPE";
     }
@@ -150,7 +155,10 @@ RreqHeader::RreqHeader(uint8_t flags,
                        Ipv4Address origin,
                        uint32_t originSeqNo,
                        Ipv4Address sender,
-                       uint8_t WHForwardFlag
+                       uint8_t WHForwardFlag,
+                       uint8_t AnotherRouteCreateFlag,
+                       Ipv4Address detection_origin,
+                       std::set<Ipv4Address> ExcludedList
                        )
     : m_flags(flags),
       m_reserved(reserved),
@@ -161,7 +169,10 @@ RreqHeader::RreqHeader(uint8_t flags,
       m_origin(origin),
       m_originSeqNo(originSeqNo),
       m_sender(sender),
-      m_WHForwardFlag(WHForwardFlag)
+      m_WHForwardFlag(WHForwardFlag),
+      m_AnotherRouteCreateFlag(AnotherRouteCreateFlag),
+      m_detection_origin(detection_origin),
+      m_ExcludedList(ExcludedList)
 {
 }
 
@@ -186,12 +197,34 @@ RreqHeader::GetInstanceTypeId() const
 uint32_t
 RreqHeader::GetSerializedSize() const
 {
+    // 既存RREQ 23 bytes
+    // + sender(4) + WHForwardFlag(1) + AnotherRouteCreateFlag(1)
+    // + ExcludedListSize(4) + ExcludedList(4 * N)
     return 23
-            + 4 // 送信ノードのIPアドレス
-            + 1; // +1 for WHForwardFlag
-            //+ 1 //　別経路構築用のフラグ
-            // + 4; // 別経路要求メッセージのID
+           + 4  // sender
+           + 1  // WHForwardFlag
+           + 1  // AnotherRouteCreateFlag
+           + 4  // 別経路要求メッセージの送信元IPアドレス
+           + 4  // ExcludedList size (uint32_t)
+           + 4 * m_ExcludedList.size();
 }
+
+// void
+// RreqHeader::Serialize(Buffer::Iterator i) const
+// {
+//     i.WriteU8(m_flags);
+//     i.WriteU8(m_reserved);
+//     i.WriteU8(m_hopCount);
+//     i.WriteHtonU32(m_requestID);
+//     WriteTo(i, m_dst);
+//     i.WriteHtonU32(m_dstSeqNo);
+//     WriteTo(i, m_origin);
+//     i.WriteHtonU32(m_originSeqNo);
+
+//     WriteTo(i, m_sender); // 送信ノードのIPアドレスをシリアル化する
+//     i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
+//     //i.WriteU8(m_AnotherRouteCreateFlag); // 別経路作成用のフラグ
+// }
 
 void
 RreqHeader::Serialize(Buffer::Iterator i) const
@@ -205,15 +238,62 @@ RreqHeader::Serialize(Buffer::Iterator i) const
     WriteTo(i, m_origin);
     i.WriteHtonU32(m_originSeqNo);
 
-    WriteTo(i, m_sender); // 送信ノードのIPアドレスをシリアル化する
-    i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
-    //i.WriteU8(m_AnotherRouteCreateFlag); // 別経路作成用のフラグ
+    // 追加: 送信ノードIP
+    WriteTo(i, m_sender);
+
+    // 追加: WHForwardFlag
+    i.WriteU8(m_WHForwardFlag);
+
+    // 追加: 別経路作成フラグ
+    i.WriteU8(m_AnotherRouteCreateFlag);
+
+    WriteTo(i, m_detection_origin);
+
+    // 追加: ExcludedList（サイズ + アドレス列）
+    i.WriteHtonU32(static_cast<uint32_t>(m_ExcludedList.size()));
+    for (const auto& addr : m_ExcludedList)
+    {
+        WriteTo(i, addr);
+    }
 }
+
+// uint32_t
+// RreqHeader::Deserialize(Buffer::Iterator start)
+// {
+//     Buffer::Iterator i = start;
+//     m_flags = i.ReadU8();
+//     m_reserved = i.ReadU8();
+//     m_hopCount = i.ReadU8();
+//     m_requestID = i.ReadNtohU32();
+//     ReadFrom(i, m_dst);
+//     m_dstSeqNo = i.ReadNtohU32();
+//     ReadFrom(i, m_origin);
+//     m_originSeqNo = i.ReadNtohU32();
+
+//     ReadFrom(i, m_sender); // 送信ノードのIPアドレスをデシリアル化する
+//     m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
+//     //m_AnotherRouteCreateFlag = i.ReadU8();
+
+//     // m_ExcludedList.clear();
+//     // while (i.GetDistanceFrom(start) < GetSerializedSize())
+//     // {
+//     //     Ipv4Address addr;
+//     //     ReadFrom(i, addr);
+//     //     m_ExcludedList.push_back(addr);
+//     // }
+
+//     //m_DetectionReqID = i.ReadNtohU32();
+
+//     uint32_t dist = i.GetDistanceFrom(start);
+//     NS_ASSERT(dist == GetSerializedSize());
+//     return dist;
+// }
 
 uint32_t
 RreqHeader::Deserialize(Buffer::Iterator start)
 {
     Buffer::Iterator i = start;
+
     m_flags = i.ReadU8();
     m_reserved = i.ReadU8();
     m_hopCount = i.ReadU8();
@@ -223,19 +303,27 @@ RreqHeader::Deserialize(Buffer::Iterator start)
     ReadFrom(i, m_origin);
     m_originSeqNo = i.ReadNtohU32();
 
-    ReadFrom(i, m_sender); // 送信ノードのIPアドレスをデシリアル化する
-    m_WHForwardFlag = i.ReadU8(); // WHForwardFlagを1バイトとしてデシリアル化する
-    //m_AnotherRouteCreateFlag = i.ReadU8();
+    // 追加: 送信ノードIP
+    ReadFrom(i, m_sender);
 
-    // m_ExcludedList.clear();
-    // while (i.GetDistanceFrom(start) < GetSerializedSize())
-    // {
-    //     Ipv4Address addr;
-    //     ReadFrom(i, addr);
-    //     m_ExcludedList.push_back(addr);
-    // }
+    // 追加: WHForwardFlag
+    m_WHForwardFlag = i.ReadU8();
 
-    //m_DetectionReqID = i.ReadNtohU32();
+    // 追加: 別経路作成フラグ
+    m_AnotherRouteCreateFlag = i.ReadU8();
+
+    //別経路要求メッセージの送信元IPアドレス
+    ReadFrom(i, m_detection_origin);
+
+    // 追加: ExcludedList
+    uint32_t exSize = i.ReadNtohU32();
+    m_ExcludedList.clear();
+    for (uint32_t n = 0; n < exSize; ++n)
+    {
+        Ipv4Address addr;
+        ReadFrom(i, addr);
+        m_ExcludedList.insert(addr);
+    }
 
     uint32_t dist = i.GetDistanceFrom(start);
     NS_ASSERT(dist == GetSerializedSize());
@@ -342,7 +430,7 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
                        uint8_t WHForwardFlag,
                        uint32_t NeighborCount,
                        double NeighborRatio,
-                       std::vector<Ipv4Address> neighborList)
+                       std::set<Ipv4Address> neighborList)
     : m_flags(0),
       m_prefixSize(prefixSize),
       m_hopCount(hopCount),
@@ -451,7 +539,7 @@ RrepHeader::Deserialize(Buffer::Iterator start)
     {
         Ipv4Address neighborAddr;
         ReadFrom(i, neighborAddr);
-        m_neighborList.push_back(neighborAddr);
+        m_neighborList.insert(neighborAddr);
     }
 
     // m_AnotherRouteCreateFlag = i.ReadU8();
@@ -1078,6 +1166,129 @@ Step3ResultHeader::Print(std::ostream &os) const
 
 std::ostream &
 operator<<(std::ostream &os, const Step3ResultHeader &h)
+{
+    h.Print(os);
+    return os;
+}
+
+//-----------------------------------------------------------------------------
+// DetectionRreqHeader
+//-----------------------------------------------------------------------------
+DetectionRreqHeader::DetectionRreqHeader(
+    Ipv4Address origin,
+    Ipv4Address target,
+    uint32_t id,
+    const std::set<Ipv4Address>& exclusiveNeighbors,
+    const std::set<Ipv4Address>& targetNeighborList)
+    : m_origin(origin),
+      m_target(target),
+      m_ID(id),
+      m_exclusiveNeighbors(exclusiveNeighbors),
+      m_targetNeighborList(targetNeighborList)
+{
+}
+
+TypeId
+DetectionRreqHeader::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::aodv::DetectionRreqHeader")
+            .SetParent<Header>()
+            .SetGroupName("Aodv")
+            .AddConstructor<DetectionRreqHeader>();
+    return tid;
+}
+
+TypeId
+DetectionRreqHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+uint32_t
+DetectionRreqHeader::GetSerializedSize() const
+{
+    return
+        4 + // origin
+        4 + // target
+        4 + // ID
+        4 + // exclusiveNeighbors size
+        4 * m_exclusiveNeighbors.size() +
+        4 + // targetNeighborList size
+        4 * m_targetNeighborList.size();
+}
+
+void
+DetectionRreqHeader::Serialize(Buffer::Iterator i) const
+{
+    // 基本フィールド
+    WriteTo(i, m_origin);
+    WriteTo(i, m_target);
+    i.WriteHtonU32(m_ID);
+
+    // 排他的隣接ノードリスト
+    i.WriteHtonU32(m_exclusiveNeighbors.size());
+    for (const auto& addr : m_exclusiveNeighbors)
+    {
+        WriteTo(i, addr);
+    }
+
+    // 検知対象ノードの隣接ノードリスト（バイパス対象）
+    i.WriteHtonU32(m_targetNeighborList.size());
+    for (const auto& addr : m_targetNeighborList)
+    {
+        WriteTo(i, addr);
+    }
+}
+
+uint32_t
+DetectionRreqHeader::Deserialize(Buffer::Iterator start)
+{
+    Buffer::Iterator i = start;
+
+    // 基本フィールド
+    ReadFrom(i, m_origin);
+    ReadFrom(i, m_target);
+    m_ID = i.ReadNtohU32();
+
+    // 排他的隣接ノードリスト
+    uint32_t exSize = i.ReadNtohU32();
+    m_exclusiveNeighbors.clear();
+    for (uint32_t n = 0; n < exSize; ++n)
+    {
+        Ipv4Address addr;
+        ReadFrom(i, addr);
+        m_exclusiveNeighbors.insert(addr);
+    }
+
+    // 検知対象ノードの隣接ノードリスト
+    uint32_t nbSize = i.ReadNtohU32();
+    m_targetNeighborList.clear();
+    for (uint32_t n = 0; n < nbSize; ++n)
+    {
+        Ipv4Address addr;
+        ReadFrom(i, addr);
+        m_targetNeighborList.insert(addr);
+    }
+
+    uint32_t dist = i.GetDistanceFrom(start);
+    NS_ASSERT(dist == GetSerializedSize());
+    return dist;
+}
+
+void
+DetectionRreqHeader::Print(std::ostream &os) const
+{
+    os << "DETECTION_RREQ "
+       << "ID=" << m_ID
+       << " origin=" << m_origin
+       << " target=" << m_target
+       << " EA_size=" << m_exclusiveNeighbors.size()
+       << " NB_size=" << m_targetNeighborList.size();
+}
+
+std::ostream &
+operator<<(std::ostream &os, const DetectionRreqHeader &h)
 {
     h.Print(os);
     return os;

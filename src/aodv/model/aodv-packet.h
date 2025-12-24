@@ -43,7 +43,8 @@ enum MessageType
     AODVTYPE_VSR = 5,
     AODVTYPE_AUTH = 6,    //ステップ３認証パケット用
     AODVTYPE_AUTHREP = 7,
-    AODVTYPE_STEP3RESULT = 8
+    AODVTYPE_STEP3RESULT = 8,
+    AODVTYPE_DetecReq = 9
 };
 
 /**
@@ -158,7 +159,10 @@ class RreqHeader : public Header
                Ipv4Address origin = Ipv4Address(),
                uint32_t originSeqNo = 0,
                Ipv4Address sender = Ipv4Address(),
-               uint8_t WHForwardFlag = 0
+               uint8_t WHForwardFlag = 0,
+               uint8_t AnotherRouteCreateFlag = 0,
+               Ipv4Address Anotherreq_origin = Ipv4Address(),
+               std::set<Ipv4Address> ExcludedList = std::set<Ipv4Address>()
                );
 
     /**
@@ -310,37 +314,48 @@ class RreqHeader : public Header
         return m_WHForwardFlag;
     }
 
-    // //別経路作成用のフラグ
-    // void SetAnotherRouteCreateFlag(bool f)
-    // {
-    //     m_AnotherRouteCreateFlag = f;
-    // }
+    //別経路作成用のフラグ
+    void SetAnotherRouteCreateFlag(bool f)
+    {
+        m_AnotherRouteCreateFlag = f;
+    }
 
-    // bool GetAnotherRouteCreateFlag() const
-    // {
-    //     return m_AnotherRouteCreateFlag;
-    // }
+    bool GetAnotherRouteCreateFlag() const
+    {
+        return m_AnotherRouteCreateFlag;
+    }
 
-    // void SetExcludedList(std::vector<Ipv4Address> Exlist)
-    // {
-    //     m_ExcludedList = Exlist;
-    // }
+    void SetExcludedList(std::set<Ipv4Address> Exlist)
+    {
+        m_ExcludedList = Exlist;
+    }
 
-    // std::vector<Ipv4Address> GetExcludedList() const
-    // {
-    //     return m_ExcludedList;
-    // }
+    std::set<Ipv4Address> GetExcludedList() const
+    {
+        return m_ExcludedList;
+    }
 
-    // //別経路要求メッセージのID設定・取得
-    // void SetDetectionReqID(const uint32_t id)
-    // {
-    //     m_DetectionReqID = id;
-    // }
+    //別経路要求メッセージのID設定・取得
+    void SetDetectionReqID(const uint32_t id)
+    {
+        m_DetectionReqID = id;
+    }
 
-    // uint32_t GetDetectionReqID() const
-    // {
-    //     return m_DetectionReqID;
-    // }
+    uint32_t GetDetectionReqID() const
+    {
+        return m_DetectionReqID;
+    }
+
+    //別経路要求メッセージの送信元IPを設定・取得
+    void SetDetection_Origin(const Ipv4Address detection_origin)
+    {
+        m_detection_origin = detection_origin;
+    }
+
+    Ipv4Address GetDetection_Origin() const
+    {
+        return m_detection_origin;
+    }
 
     // Flags
     /**
@@ -392,9 +407,10 @@ class RreqHeader : public Header
     uint32_t m_originSeqNo; ///< Source Sequence Number
     Ipv4Address m_sender;   ///< RREQ送信ノードのIPアドレス
     uint8_t m_WHForwardFlag;///< 内部WH攻撃用転送フラグ
-    //bool m_AnotherRouteCreateFlag; ///< 別経路構築用のフラグ
-    // std::vector<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
-    // uint32_t m_DetectionReqID;
+    bool m_AnotherRouteCreateFlag; ///< 別経路構築用のフラグ
+    std::set<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
+    uint32_t m_DetectionReqID;
+    Ipv4Address m_detection_origin;
 };
 
 /**
@@ -454,7 +470,7 @@ class RrepHeader : public Header
                uint8_t WHForwardFlag = 0,
                uint32_t NeighborCount = 0,
                double NeighborRatio = 0.0,
-               std::vector<Ipv4Address> neighborList = std::vector<Ipv4Address>()
+               std::set<Ipv4Address> neighborList = std::set<Ipv4Address>()
                );
     /**
      * @brief Get the type ID.
@@ -605,12 +621,12 @@ class RrepHeader : public Header
     }
 
     //隣接ノードリストを設定・取得
-    void SetNeighborList(const std::vector<Ipv4Address> neighborNodeList)
+    void SetNeighborList(const std::set<Ipv4Address> neighborNodeList)
     {
         m_neighborList = neighborNodeList;
     }
 
-    const std::vector<Ipv4Address>& GetNeighborList() const
+    const std::set<Ipv4Address>& GetNeighborList() const
     {
         return m_neighborList;
     }
@@ -666,7 +682,7 @@ class RrepHeader : public Header
     uint8_t m_WHForwardFlag; ///< 内部WH攻撃用転送フラグ
     uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
     double m_NeighborRatio;    ///< 隣接ノード比率
-    std::vector<Ipv4Address> m_neighborList; ///< 隣接ノードリスト
+    std::set<Ipv4Address> m_neighborList; ///< 隣接ノードリスト
 };
 
 /**
@@ -1069,6 +1085,84 @@ private:
 };
 
 std::ostream &operator<<(std::ostream &os, const Step3ResultHeader &h);
+
+//-----------------------------------------------------------------------------
+// DetectionRreqHeader
+// 自身の排他的隣接ノード間で，検知対象ノードをバイパスした経路作製を依頼する
+//-----------------------------------------------------------------------------
+class DetectionRreqHeader : public Header
+{
+public:
+    DetectionRreqHeader(Ipv4Address origin = Ipv4Address(),   //判定開始ノード
+                        Ipv4Address target = Ipv4Address(),   //判定対象ノード
+                        uint32_t id = 0,
+                        const std::set<Ipv4Address>& exclusiveNeighbors = {},   //排他的隣接ノードリスト
+                        const std::set<Ipv4Address>& targetNeighborList = {}    //ターゲットノードの隣接ノードリスト
+                       );
+
+    static TypeId GetTypeId();
+    virtual TypeId GetInstanceTypeId() const override;
+
+    // --- setter ---
+    void SetOrigin(Ipv4Address a) 
+    { 
+        m_origin = a; 
+    }
+
+    void SetTarget(Ipv4Address a) 
+    { 
+        m_target = a; 
+    }
+    
+    void SetID(uint32_t id)
+    { 
+        m_ID = id; 
+    }
+
+    void SetExclusiveNeighbors(const std::set<Ipv4Address>& list)
+    {
+        m_exclusiveNeighbors = list;
+    }
+
+    void SetTargetNeighborList(const std::set<Ipv4Address>& list)
+    {
+        m_targetNeighborList = list;
+    }
+
+    // --- getter ---
+    Ipv4Address GetOrigin() const { return m_origin; }
+    Ipv4Address GetTarget() const { return m_target; }
+    uint32_t GetID() const        { return m_ID; }
+
+    const std::set<Ipv4Address>& GetExclusiveNeighbors() const
+    {
+        return m_exclusiveNeighbors;
+    }
+
+    const std::set<Ipv4Address>& GetTargetNeighborList() const
+    {
+        return m_targetNeighborList;
+    }
+
+    // --- ns-3 Header interface ---
+    virtual uint32_t GetSerializedSize() const override;
+    virtual void Serialize(Buffer::Iterator start) const override;
+    virtual uint32_t Deserialize(Buffer::Iterator start) override;
+    virtual void Print(std::ostream &os) const override;
+
+private:
+    Ipv4Address m_origin;   // 判定要求元ノード（A）
+    Ipv4Address m_target;   // 判定対象ノード（B）
+    uint32_t    m_ID;       // 検知RREQ ID
+
+    // A の排他的隣接ノード集合 EA
+    std::set<Ipv4Address> m_exclusiveNeighbors;
+
+    // B の隣接ノード集合 NB（バイパス対象）
+    std::set<Ipv4Address> m_targetNeighborList;
+};
+
+std::ostream &operator<<(std::ostream &os, const DetectionRreqHeader &h);
 
 
 } // namespace aodv
