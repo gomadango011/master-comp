@@ -691,7 +691,13 @@ class RoutingProtocol : public Ipv4RoutingProtocol
      * @param neighbor neighbor address
      */
     void RecvReplyAck(Ptr<Packet> p, Ipv4Address neighbor, bool m_isWhForwardedPacket);
+    
 
+    void SendStep2Result(Ipv4Address originA,
+                                 Ipv4Address targetB,
+                                 uint32_t detId,
+                                 const std::map<Ipv4Address, int>& hopCountMap);
+    
     /**
      * ステップ3　共通隣接ノードに監視を要求するメッセージを受信した場合の処理
      * @param p packet
@@ -762,7 +768,8 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     void SendReplyByIntermediateNode(RoutingTableEntry& toDst,
                                      RoutingTableEntry& toOrigin,
                                      bool gratRep,
-                                     uint32_t messageid);
+                                     uint32_t messageid,
+                                     uint8_t AnotherRouteCreateFlag);
     /** Send RREP_ACK
      * @param neighbor neighbor address
      */

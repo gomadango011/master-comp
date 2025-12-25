@@ -1992,7 +1992,7 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
             if (!rreqHeader.GetDestinationOnly() && toDst.GetFlag() == VALID)
             {
                 m_routingTable.LookupRoute(origin, toOrigin);
-                SendReplyByIntermediateNode(toDst, toOrigin, rreqHeader.GetGratuitousRrep(), rreqHeader.GetId());
+                SendReplyByIntermediateNode(toDst, toOrigin, rreqHeader.GetGratuitousRrep(), rreqHeader.GetId(), rreqHeader.GetAnotherRouteCreateFlag());
                 return;
             }
             rreqHeader.SetDstSeqno(toDst.GetSeqNo());
@@ -2193,7 +2193,8 @@ void
 RoutingProtocol::SendReplyByIntermediateNode(RoutingTableEntry& toDst,
                                              RoutingTableEntry& toOrigin,
                                              bool gratRep,
-                                             uint32_t messageID)
+                                             uint32_t messageID,
+                                             uint8_t AnotherRouteCreateFlag)
 {
     NS_LOG_FUNCTION(this);
     RrepHeader rrepHeader(/*prefixSize=*/0,
@@ -2203,7 +2204,8 @@ RoutingProtocol::SendReplyByIntermediateNode(RoutingTableEntry& toDst,
                           /*origin=*/toOrigin.GetDestination(),
                           /*sender=*/m_ipv4->GetAddress(1, 0).GetLocal(),
                           /*lifetime=*/toDst.GetLifeTime(),
-                          /*メッセージID*/messageID
+                          /*メッセージID*/messageID,
+                          AnotherRouteCreateFlag
                         );
 
     if(m_blacklist.find(toOrigin.GetNextHop()) != m_blacklist.end())
@@ -2456,6 +2458,45 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
     NS_LOG_LOGIC("receiver " << receiver << " origin " << rrepHeader.GetOrigin());
     if (IsMyOwnAddress(rrepHeader.GetOrigin()))
     {
+        //別経路要求用のRREPの場合
+        if(rrepHeader.GetAnotherRouteCreateFlag())
+        {
+            //m_detectionReqCacheのキューから受信した排他的隣接ノードを削除
+            const uint32_t detId = rrepHeader.GetMessageID();   // DetectionReqID の想定
+            const Ipv4Address ea = rrepHeader.GetDst();         // 今回 hop が得られた相手EA（RREQの宛先）
+
+
+            auto it = m_detectionReqCache.find(detId);
+            if (it == m_detectionReqCache.end())
+            {
+                NS_LOG_DEBUG("[Step2] detection cache not found. detId=" << detId);
+                return;
+            }
+
+            DetectionReqEntry& entry = it->second;
+
+            entry.hopCountMap[ea] = static_cast<int>(rrepHeader.GetHopCount());
+
+            // exNeighborList が set の場合：
+            entry.exNeighborList.erase(ea);
+
+             if (entry.exNeighborList.empty())
+            {
+                NS_LOG_INFO("[Step2] all EA replied. send decision. detId=" << detId);
+
+                // ★判定結果メッセージ送信（あなたの実装に合わせて関数名は調整）
+                // 例：判定開始ノードAに返す（entry.origin が A）
+                SendStep2Result(entry.origin, entry.target, entry.messageId, entry.hopCountMap);
+
+                // キャッシュ掃除（完了したセッションを残さない）
+                m_detectionReqCache.erase(it);
+            }else{
+                m_detectionReqCache[detId] = entry;
+            }
+
+            return;
+        }
+
         NS_LOG_DEBUG("送信元ノードにRREPが到達 " << rrepHeader.GetOrigin());
         if (toDst.GetFlag() == IN_SEARCH)
         {
@@ -2700,6 +2741,16 @@ RoutingProtocol::RecvReplyAck(Ptr<Packet> p, Ipv4Address neighbor, bool fromWh)
         rt.SetFlag(VALID);
         m_routingTable.Update(rt);
     }
+}
+
+void
+RoutingProtocol::SendStep2Result(Ipv4Address originA,
+                                 Ipv4Address targetB,
+                                 uint32_t detId,
+                                 const std::map<Ipv4Address, int>& hopCountMap)
+{
+    // ここで hopCountMap を詰めた結果ヘッダ（Step2ResultHeader等）を作り、
+    // originA 宛にユニキャスト送信してください（あなたのStep3Result送信と同様の作り）。
 }
 
 // void 
