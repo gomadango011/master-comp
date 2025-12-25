@@ -467,10 +467,12 @@ class RrepHeader : public Header
                Ipv4Address sender = Ipv4Address(),
                Time lifetime = MilliSeconds(0),
                uint32_t messageID = 0,
+               uint8_t AnotherRouteCreateFlag = 0,
                uint8_t WHForwardFlag = 0,
                uint32_t NeighborCount = 0,
                double NeighborRatio = 0.0,
-               std::set<Ipv4Address> neighborList = std::set<Ipv4Address>()
+               std::set<Ipv4Address> neighborList = std::set<Ipv4Address>(),
+               
                );
     /**
      * @brief Get the type ID.
@@ -631,6 +633,17 @@ class RrepHeader : public Header
         return m_neighborList;
     }
 
+    //別経路要求メッセージを識別するためのフラグ
+    void SetAnotherRouteCreateFlag(bool f)
+    {
+        m_AnotherRouteCreateFlag = f;
+    }
+
+    bool GetAnotherRouteCreateFlag() const
+    {
+        return m_AnotherRouteCreateFlag;
+    }
+
     // Flags
     /**
      * @brief Set the ack required flag
@@ -683,6 +696,7 @@ class RrepHeader : public Header
     uint32_t m_NeighborCount; ///< 隣接ノードの隣接ノード数
     double m_NeighborRatio;    ///< 隣接ノード比率
     std::set<Ipv4Address> m_neighborList; ///< 隣接ノードリスト
+    uint8_t m_AnotherRouteCreateFlag;
 };
 
 /**

@@ -427,10 +427,12 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
                        Ipv4Address sender,
                        Time lifeTime,
                        /*メッセージID*/uint32_t messageID,
+                       uint8_t AnotherRouteCreateFlag,
                        uint8_t WHForwardFlag,
                        uint32_t NeighborCount,
                        double NeighborRatio,
-                       std::set<Ipv4Address> neighborList)
+                       std::set<Ipv4Address> neighborList
+                    )
     : m_flags(0),
       m_prefixSize(prefixSize),
       m_hopCount(hopCount),
@@ -442,7 +444,8 @@ RrepHeader::RrepHeader(uint8_t prefixSize,
       m_WHForwardFlag(WHForwardFlag),
       m_NeighborCount(NeighborCount),
       m_NeighborRatio(NeighborRatio),
-      m_neighborList(neighborList)
+      m_neighborList(neighborList),
+      m_AnotherRouteCreateFlag(AnotherRouteCreateFlag)
 {
     m_lifeTime = uint32_t(lifeTime.GetMilliSeconds());
 }
@@ -480,7 +483,7 @@ RrepHeader::GetSerializedSize() const
     + 4 /*NeighborRatio*/
     + 4 //センダーのIPアドレス
     + neighborListSize; //隣接ノードリストのサイズを加
-    // + 4 /*経路要求メッセージのID*/
+    + 1 /*経路要求メッセージのフラグ*/
     
 }
 
@@ -496,6 +499,7 @@ RrepHeader::Serialize(Buffer::Iterator i) const
     WriteTo(i, m_sender); // センダーのIPアドレスをシリアル化する
     i.WriteHtonU32(m_lifeTime);
     i.WriteHtonU32(m_messageID);
+    i.WriteU8(m_AnotherRouteCreateFlag);
     i.WriteU8(m_WHForwardFlag); // WHForwardFlagを1バイトとしてシリアル化する
     i.WriteHtonU32(m_NeighborCount); // NeighborCountを4バイトとしてシリアル化する
     // ★ double → fixed-point (×10000)
@@ -542,7 +546,6 @@ RrepHeader::Deserialize(Buffer::Iterator start)
         m_neighborList.insert(neighborAddr);
     }
 
-    // m_AnotherRouteCreateFlag = i.ReadU8();
     // m_DetectionReqID = i.ReadNtohU32(); //別経路要求メッセージのID
     
     uint32_t dist = i.GetDistanceFrom(start);
@@ -631,7 +634,7 @@ RrepHeader::SetHello(Ipv4Address origin, uint32_t srcSeqNo, Time lifetime)
     // m_WHForwardFlag = 0;
     m_NeighborCount = 0;
     m_NeighborRatio = 0.0;
-    // m_AnotherRouteCreateFlag = false;
+    m_AnotherRouteCreateFlag = false;
     // m_DetectionReqID = 0;
 }
 

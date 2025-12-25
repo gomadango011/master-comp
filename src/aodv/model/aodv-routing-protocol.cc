@@ -1807,6 +1807,19 @@ RoutingProtocol::RecvRequest(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address sr
         }
     }
 
+    if(rreqHeader.GetAnotherRouteCreateFlag())
+    {
+        auto ExcludedList = rreqHeader.GetExcludedList();
+        //別経路構築メッセージの処理
+        if(ExcludedList.find(receiver) != ExcludedList.end() || 
+            rreqHeader.GetHopCount() > 7 ||
+            IsMyOwnAddress(rreqHeader.GetDetection_Origin())
+        )
+        {
+            return;
+        }
+    }
+
     /*
      *  Node checks to determine whether it has received a RREQ with the same Originator IP Address
      * and RREQ ID. If such a RREQ has been received, the node silently discards the newly received
@@ -2143,7 +2156,9 @@ RoutingProtocol::SendReply(const RreqHeader& rreqHeader, const RoutingTableEntry
                           /*origin=*/toOrigin.GetDestination(),
                           /*sender=*/m_ipv4->GetAddress(1, 0).GetLocal(),
                           /*lifetime=*/m_myRouteTimeout,
-                          /*メッセージID*/rreqHeader.GetId());
+                          /*メッセージID*/rreqHeader.GetId(),
+                          /*別経路要求フラグ*/rreqHeader.GetAnotherRouteCreateFlag()
+                        );
 
     if(m_blacklist.find(toOrigin.GetNextHop()) != m_blacklist.end())
     {
@@ -2188,7 +2203,8 @@ RoutingProtocol::SendReplyByIntermediateNode(RoutingTableEntry& toDst,
                           /*origin=*/toOrigin.GetDestination(),
                           /*sender=*/m_ipv4->GetAddress(1, 0).GetLocal(),
                           /*lifetime=*/toDst.GetLifeTime(),
-                          /*メッセージID*/messageID);
+                          /*メッセージID*/messageID
+                        );
 
     if(m_blacklist.find(toOrigin.GetNextHop()) != m_blacklist.end())
     {
@@ -5179,13 +5195,11 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
     entry.excludedList = excludedList; //バイパスノードリスト
     entry.target = detectionrq.GetTarget();
 
-    // まず初期状態ではホップ数未計測（例: 255）
+    // まず初期状態ではホップ数未計測（例: -1）
     for (auto addr : entry.exNeighborList)
     {
-        entry.hopCountMap[addr] = 255;
+        entry.hopCountMap[addr] = -1;
     }
-
-    m_detectionReqCache[entry.messageId] = entry;
 
     //自ノード以外の排他的隣接ノードに別経路要求メッセージを送信
     for(auto dst : detectionrq.GetExclusiveNeighbors())
@@ -5197,8 +5211,6 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
 
         NS_LOG_DEBUG("EAノード(" << receiver << ") → " << dst
                      << " に別経路RREQを送信 (SendRequest使用)");
-
-        m_isExclusiveRreq[dst] = entry.messageId;
 
         //排他的隣接ノードがRREQを送信（最大7ホップ）
         RreqHeader rreqHeader;
@@ -5239,6 +5251,9 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
 
         rreqHeader.SetDstSeqno(0);
         rreqHeader.SetHopCount(0);
+
+        //別経路要求メッセージの情報をキャッシュに入れる
+        m_detectionReqCache[rreqHeader.GetId()] = entry;
 
         // Send RREQ as subnet directed broadcast from each interface used by aodv
     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
