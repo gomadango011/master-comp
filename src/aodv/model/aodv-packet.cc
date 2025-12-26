@@ -75,7 +75,9 @@ TypeHeader::Deserialize(Buffer::Iterator start)
     case AODVTYPE_AUTH :
     case AODVTYPE_AUTHREP :
     case AODVTYPE_STEP3RESULT: 
-    case AODVTYPE_DetecReq:{
+    case AODVTYPE_DetecReq:
+    case AODVTYPE_Detecrep:
+    {
         m_type = (MessageType)type;
         break;
     }
@@ -124,6 +126,10 @@ TypeHeader::Print(std::ostream& os) const
     case AODVTYPE_DetecReq:
     {
         os << "別経路要求メッセージヘッダ";
+    }
+    case AODVTYPE_Detecrep:
+    {
+        os << "別経路要求返送メッセージヘッダ";
     }
     default:
         os << "UNKNOWN_TYPE";
@@ -482,8 +488,8 @@ RrepHeader::GetSerializedSize() const
     // + 1 /*AnotherRouteCreateFlag*/
     + 4 /*NeighborRatio*/
     + 4 //センダーのIPアドレス
-    + neighborListSize; //隣接ノードリストのサイズを加
-    + 1 /*経路要求メッセージのフラグ*/
+    + neighborListSize //隣接ノードリストのサイズを加
+    + 1; /*経路要求メッセージのフラグ*/
     
 }
 
@@ -1292,6 +1298,104 @@ DetectionRreqHeader::Print(std::ostream &os) const
 
 std::ostream &
 operator<<(std::ostream &os, const DetectionRreqHeader &h)
+{
+    h.Print(os);
+    return os;
+}
+
+Step2ResultHeader::Step2ResultHeader(Ipv4Address originA,
+                                     Ipv4Address targetB,
+                                     Ipv4Address reporter,
+                                     uint32_t detId,
+                                     const std::map<ns3::Ipv4Address, uint8_t>& hopList)
+    : m_originA(originA),
+      m_targetB(targetB),
+      m_reporter(reporter),
+      m_detId(detId),
+      m_hopList(hopList)
+{
+}
+
+NS_OBJECT_ENSURE_REGISTERED(Step2ResultHeader);
+
+TypeId
+Step2ResultHeader::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::aodv::Step2ResultHeader")
+            .SetParent<Header>()
+            .SetGroupName("Aodv")
+            .AddConstructor<Step2ResultHeader>();
+    return tid;
+}
+
+TypeId
+Step2ResultHeader::GetInstanceTypeId() const
+{
+    return GetTypeId();
+}
+
+uint32_t
+Step2ResultHeader::GetSerializedSize() const
+{
+    // originA(4)+targetB(4)+reporter(4)+detId(4)+count(2)+N*(EA(4)+hop(1))
+    return 4 + 4 + 4 + 4 + 2 + static_cast<uint32_t>(m_hopList.size()) * (4 + 1);
+}
+
+void
+Step2ResultHeader::Serialize(Buffer::Iterator i) const
+{
+    WriteTo(i, m_originA);
+    WriteTo(i, m_targetB);
+    WriteTo(i, m_reporter);
+    i.WriteHtonU32(m_detId);
+
+    i.WriteHtonU16(static_cast<uint16_t>(m_hopList.size()));
+    for (const auto& kv : m_hopList)
+    {
+        WriteTo(i, kv.first);   // EA
+        i.WriteU8(kv.second);   // hop (uint8_t)
+    }
+}
+
+uint32_t
+Step2ResultHeader::Deserialize(Buffer::Iterator start)
+{
+    Buffer::Iterator i = start;
+
+    ReadFrom(i, m_originA);
+    ReadFrom(i, m_targetB);
+    ReadFrom(i, m_reporter);
+    m_detId = i.ReadNtohU32();
+
+    uint16_t n = i.ReadNtohU16();
+    m_hopList.clear();
+
+    for (uint16_t k = 0; k < n; ++k)
+    {
+        Ipv4Address ea;
+        ReadFrom(i, ea);
+        uint8_t hop = i.ReadU8();
+        m_hopList[ea] = hop;
+    }
+
+    uint32_t dist = i.GetDistanceFrom(start);
+    NS_ASSERT(dist == GetSerializedSize());
+    return dist;
+}
+
+void
+Step2ResultHeader::Print(std::ostream& os) const
+{
+    os << "STEP2_RESULT detId=" << m_detId
+       << " originA=" << m_originA
+       << " targetB=" << m_targetB
+       << " reporter=" << m_reporter
+       << " n=" << m_hopList.size();
+}
+
+std::ostream&
+operator<<(std::ostream& os, const Step2ResultHeader& h)
 {
     h.Print(os);
     return os;

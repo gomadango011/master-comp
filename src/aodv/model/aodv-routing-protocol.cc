@@ -1590,6 +1590,16 @@ RoutingProtocol::RecvAodv(Ptr<Socket> socket)
         RecvStep3Result(packet, receiver, sender, m_isWhForwardedPacket);
         break;
     }
+    case AODVTYPE_DetecReq: {
+        NS_LOG_DEBUG("AODVTYPE_STEP3RESULTを受信しました");
+        RecvDetectionReq(packet, receiver, sender, m_isWhForwardedPacket);
+        break;
+    }
+    case AODVTYPE_Detecrep: {
+        NS_LOG_DEBUG("AODVTYPE_Detecrepを受信しました");
+        RecvStep2Result(packet, receiver, sender, m_isWhForwardedPacket);
+        break;
+    }
     }
 }
 
@@ -2460,27 +2470,57 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
     {
         //別経路要求用のRREPの場合
         if(rrepHeader.GetAnotherRouteCreateFlag())
-        {
-            //m_detectionReqCacheのキューから受信した排他的隣接ノードを削除
-            const uint32_t detId = rrepHeader.GetMessageID();   // DetectionReqID の想定
-            const Ipv4Address ea = rrepHeader.GetDst();         // 今回 hop が得られた相手EA（RREQの宛先）
-
-
-            auto it = m_detectionReqCache.find(detId);
-            if (it == m_detectionReqCache.end())
+        {   
+            const uint32_t rreqId = rrepHeader.GetMessageID(); // ←RREQ ID
+            auto itMap = m_step2RreqIdMap.find(rreqId);
+            if (itMap == m_step2RreqIdMap.end())
             {
-                NS_LOG_DEBUG("[Step2] detection cache not found. detId=" << detId);
+                NS_LOG_DEBUG("[Step2] RREQ ID not found in step2 map. rreqId=" << rreqId);
+                return;
+            } 
+
+            uint32_t detId = itMap->second.detId;
+            Ipv4Address originA = itMap->second.originA;
+            Ipv4Address dstEa = itMap->second.dstEa; // このRREQの宛先EA
+
+            if(dstEa != rrepHeader.GetDst())
+            {
+                NS_LOG_DEBUG("[Step2] RREP dst does not match dstEa. rrepDst=" << rrepHeader.GetDst() << " dstEa=" << dstEa);
                 return;
             }
 
-            DetectionReqEntry& entry = it->second;
+            // この rreqId はもう用済み（重複処理防止）
+            m_step2RreqIdMap.erase(itMap);
 
-            entry.hopCountMap[ea] = static_cast<int>(rrepHeader.GetHopCount());
+            // 2) originA -> detId で entry を安全に取得（operator[]は禁止）
+            auto itO = m_step2EntryByOrigin.find(originA);
+            if (itO == m_step2EntryByOrigin.end())
+            {
+                NS_LOG_DEBUG("[Step2] originA entry map not found. originA=" << originA);
+                return;
+            }
+            auto itE = itO->second.find(detId);
+            if (itE == itO->second.end())
+            {
+                NS_LOG_DEBUG("[Step2] detId entry not found. detId=" << detId << " originA=" << originA);
+                return;
+            }
 
-            // exNeighborList が set の場合：
-            entry.exNeighborList.erase(ea);
+            DetectionReqEntry& entry = itE->second;
 
-             if (entry.exNeighborList.empty())
+            // 3) hop数を記録（このRREQは dstEa 宛に飛ばしたので dstEa を更新するのが確実）
+            entry.hopCountMap[dstEa] = rrepHeader.GetHopCount();
+
+            // 4) 未返信EAリストから削除（set前提）
+            entry.exNeighborList.erase(dstEa);
+
+            NS_LOG_DEBUG("[Step2] detId=" << detId
+                 << " originA=" << originA
+                 << " got hop from EA=" << dstEa
+                 << " hop=" << rrepHeader.GetHopCount()
+                 << " remainingEA=" << entry.exNeighborList.size());
+
+            if (entry.exNeighborList.empty())
             {
                 NS_LOG_INFO("[Step2] all EA replied. send decision. detId=" << detId);
 
@@ -2488,12 +2528,12 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
                 // 例：判定開始ノードAに返す（entry.origin が A）
                 SendStep2Result(entry.origin, entry.target, entry.messageId, entry.hopCountMap);
 
-                // キャッシュ掃除（完了したセッションを残さない）
-                m_detectionReqCache.erase(it);
-            }else{
-                m_detectionReqCache[detId] = entry;
+                itO->second.erase(itE);
+                if (itO->second.empty())
+                {
+                    m_step2EntryByOrigin.erase(itO);
+                }
             }
-
             return;
         }
 
@@ -2747,11 +2787,118 @@ void
 RoutingProtocol::SendStep2Result(Ipv4Address originA,
                                  Ipv4Address targetB,
                                  uint32_t detId,
-                                 const std::map<Ipv4Address, int>& hopCountMap)
+                                 const std::map<Ipv4Address, uint8_t>& hopCountMap)
 {
     // ここで hopCountMap を詰めた結果ヘッダ（Step2ResultHeader等）を作り、
     // originA 宛にユニキャスト送信してください（あなたのStep3Result送信と同様の作り）。
+
+    NS_LOG_FUNCTION(this);
+
+    Step2ResultHeader step2ResultHeader(
+        /*別経路要求メッセージの送信元*/originA,
+        /*このメッセージの送信ノード*/m_ipv4->GetAddress(1, 0).GetLocal(),
+        /*検知対象ノード*/targetB,
+        /*別経路要求用のID*/detId,
+        /*ホップ数マップ*/hopCountMap
+    );
+
+    //別経路要求メッセージの送信元ノードまでのルーチングテーブルを取得
+    RoutingTableEntry toOrigin;
+    if (!m_routingTable.LookupRoute(originA, toOrigin))
+    {
+        NS_LOG_DEBUG("SendStep2Result: 検知開始ノード "
+                     << originA << " へのルートが存在しません");
+        return;
+    }
+
+    Ptr<Packet> packet = Create<Packet>();
+    SocketIpTtlTag tag;
+    tag.SetTtl(toOrigin.GetHop());
+    packet->AddPacketTag(tag);
+    packet->AddHeader(step2ResultHeader);
+    TypeHeader tHeader(AODVTYPE_Detecrep);
+    packet->AddHeader(tHeader);
+    Ptr<Socket> socket = FindSocketWithInterfaceAddress(toOrigin.GetInterface());
+    NS_ASSERT(socket);
+    socket->SendTo(packet, 0, InetSocketAddress(toOrigin.GetNextHop(), AODV_PORT));
+
+    //総メッセージ取得
+    m_whStats.totalAodvCtrlMessages++;
+    m_whStats.totalAodvCtrlBytes += packet->GetSize();
+    return;
 }
+
+// Step2Result メッセージ受信処理
+void
+RoutingProtocol::RecvStep2Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool fromWh)
+{
+    NS_LOG_FUNCTION(this << receiver << src);
+
+    // WH転送での特別扱いが必要ならここに入れる（Step3同様）
+    // 今回は省略可。必要ならあなたの他関数と同じ処理を追加。
+
+    Step2ResultHeader step2result;
+    p->RemoveHeader(step2result);
+
+    const Ipv4Address originA  = step2result.GetOriginA();
+    const Ipv4Address reporter = step2result.GetReporter();
+    const Ipv4Address targetB  = step2result.GetTargetB();
+    const uint32_t detId       = step2result.GetDetId();
+
+    // originA（自分）宛でなければ無視
+    if (!IsMyOwnAddress(originA))
+    {
+        NS_LOG_DEBUG("[Step2Result] Not for me. originA=" << originA);
+        return;
+    }
+
+    auto it = m_step2Collect.find(detId);
+    if (it == m_step2Collect.end())
+    {
+        NS_LOG_DEBUG("[Step2Result] session not found detId=" << detId);
+        return;
+    }
+
+    Step2CollectEntry& sess = it->second;
+
+    // targetが一致しないのは異常（保険）
+    if (sess.targetB != targetB)
+    {
+        NS_LOG_WARN("[Step2Result] target mismatch detId=" << detId
+                    << " sess.targetB=" << sess.targetB
+                    << " recv.targetB=" << targetB);
+        return;
+    }
+
+    // 結果保存（reporterが同じなら上書き）
+    sess.reports[reporter] = step2result.GetHopList();
+
+    // pendingから除去（pendingEas を使っていないならここはスキップ可）
+    sess.pendingEas.erase(reporter);
+
+    NS_LOG_DEBUG("[Step2Result] detId=" << detId
+                 << " reporter=" << reporter
+                 << " pending=" << sess.pendingEas.size()
+                 << " reports=" << sess.reports.size());
+
+    // 全EAの結果が揃ったら次へ
+    if (sess.pendingEas.empty())
+    {
+        if (sess.timeoutEvent.IsPending())
+        {
+            sess.timeoutEvent.Cancel();
+        }
+
+        NS_LOG_INFO("[Step2] all Step2Result collected detId=" << detId
+                    << " targetB=" << targetB
+                    << " reporters=" << sess.reports.size());
+
+        // ★全受信 → 判定
+        EvaluateStep2AndAct(detId, /*timedOut=*/false);
+        return;
+    }
+}
+
 
 // void 
 // RoutingProtocol::ProcessCreateAnotherRoutes(const RrepHeader rrepHeader)
@@ -3164,7 +3311,12 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         }
 
         //別経路要求メッセージを送信
-        SendDetectionReq_to_ExNeighbors(rrepHeader, receiver, exclusiveNeighbors);
+        SendDetectionReq_to_ExNeighbors(rrepHeader,
+                                        receiver, 
+                                        exclusiveNeighbors,
+                                        NB,
+                                        isRebroadcasted
+                                    );
     }else{
         //正常ノードと判定
     }
@@ -5175,7 +5327,12 @@ RoutingProtocol::SendStep3Result(Ipv4Address origin,
 
 //WH攻撃検知用　排他的隣接ノード同士の別経路作成Requestメッセージ送信関数
 void
-RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, const Ipv4Address receiver, const std::set<Ipv4Address> Exneighbors)
+RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
+                                                 const Ipv4Address receiver,
+                                                 const std::set<Ipv4Address> Exneighbors,
+                                                 const std::set<Ipv4Address> NB,
+                                                 bool isRebroadcasted
+                                                )
 {
     
     NS_LOG_FUNCTION(this);
@@ -5186,7 +5343,22 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
 
     //ノードIDと排他的隣接ノードのリスト、それぞれの隣接ノードの検知結果を保存する構造体を作成
 
-    m_anotherRouteID++;
+    const uint32_t detid = m_anotherRouteID++;
+    
+    // ★origin(A)側の集約セッションを作る
+    Step2CollectEntry sess;
+    sess.originA = receiver;              // 判定開始ノードA（自ノード）
+    sess.targetB = rrepHeader.GetDst();   // 判定対象B
+    sess.detId   = detid;
+    sess.pendingEas = Exneighbors;
+    sess.pendingEas.erase(receiver);      // 自分は結果送信者にならない想定なら除外
+    sess.reports.clear();
+
+    //ステップ3用の情報を保存
+    sess.isRebroadcasted = isRebroadcasted;
+    sess.NB = NB;
+
+    m_step2Collect[detid] = sess;
 
     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
     {
@@ -5196,7 +5368,7 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
         DetectionRreqHeader DetectionRreqHeader(
             /*送信元アドレス*/receiver,
             /*検知対象アドレス*/rrepHeader.GetDst(),
-            /*別経路要求ID*/m_anotherRouteID,
+            /*別経路要求ID*/detid,
             /*排他的隣接ノードリスト*/Exneighbors,
             /*検知対象ノードの隣接ノードリスト*/targetNeighborList
         );
@@ -5223,34 +5395,114 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader, 
     }
 
     //ステップ2の検知メッセージをすべて受信できなかった場合タイマを設定
+    const uint16_t ttl = 7;
+    Time wait = 2 * m_nodeTraversalTime * (ttl + m_timeoutBuffer) + MilliSeconds(300);
+
+    auto it = m_step2Collect.find(detid);
+    if (it != m_step2Collect.end())
+    {
+        it->second.timeoutEvent =
+            Simulator::Schedule(wait, &RoutingProtocol::Step2CollectTimeout, this, detid);
+    }
+
+    NS_LOG_DEBUG("[Step2] origin collect session created detId=" << detid
+                 << " pending=" << m_step2Collect[detid].pendingEas.size()
+                 << " timeout=" << wait.As(Time::S));
 
 }
 
+void
+RoutingProtocol::Step2CollectTimeout(uint32_t detId)
+{
+    auto it = m_step2Collect.find(detId);
+    if (it == m_step2Collect.end())
+    {
+        return;
+    }
+
+    Step2CollectEntry& sess = it->second;
+
+    NS_LOG_WARN("[Step2] Collect timeout detId=" << detId
+                 << " targetB=" << sess.targetB
+                 << " pending=" << sess.pendingEas.size()
+                 << " received=" << sess.reports.size());
+
+    // ★タイムアウトでも判定を実行（未計測は無視される）
+    EvaluateStep2AndAct(detId, /*timedOut=*/true);
+}
+
+
 //別経路要求メッセージを受信した場合の処理
 void
-RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src)
+RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool fromWh)
 {
     NS_LOG_FUNCTION(this);
+
+    WhRebroadcastTag whReTag;
+    if (p->RemovePacketTag(whReTag) && whReTag.Get())
+    {
+        NS_LOG_DEBUG("WHノードからの再ブロードキャスト、ステップ3の結果メッセージを受信しました。送信者：" << src);
+
+        if(m_isWhNode)
+        {   
+            NS_LOG_DEBUG("入口側のノードが再ブロードキャスト、ステップ3の結果メッセージを受信しました。処理を終了します。");
+            return;
+        }
+    }
+
     DetectionRreqHeader detectionrq;
     p->RemoveHeader(detectionrq);
-    NS_LOG_DEBUG("（" << src << "）⇨（" << receiver
-                 << "） 検知対象=" << detectionrq.GetTarget()
+
+    //受信ノードが攻撃ノードかつ、WH転送パケットの場合、そのままブロードキャスト
+    if(m_isWhNode && fromWh)
+    {
+        NS_LOG_DEBUG("攻撃ノードがWH経由ステップ3の結果メッセージを受信しました。ブロードキャストします。");
+
+        // パケット再構築
+        Ptr<Packet> packet = Create<Packet>();
+        packet->AddHeader(detectionrq);
+        TypeHeader tHeader(AODVTYPE_DetecReq);
+        packet->AddHeader(tHeader);
+
+        //タグ情報を取得
+        SocketIpTtlTag tag;
+        p->RemovePacketTag(tag);
+
+        // WHノードからのブロードキャスト送信
+        BroadcastWhPacket(packet, tag);
+
+        return;
+    }
+
+    const uint32_t detId = detectionrq.GetID();
+    const Ipv4Address originA = detectionrq.GetOrigin();
+    const Ipv4Address targetB = detectionrq.GetTarget();
+
+    NS_LOG_DEBUG("（" << src << "）⇨（" << receiver << "） detId=" << detId
+                 << " originA=" << originA
+                 << " targetB=" << targetB
                  << " の別経路要求(DetectionReq)を受信");
+
     std::set<Ipv4Address> excludedList = detectionrq.GetTargetNeighborList();
-    excludedList.insert(detectionrq.GetTarget());
+    excludedList.insert(targetB);
 
     DetectionReqEntry entry;
-    entry.messageId = detectionrq.GetID();
-    entry.origin = detectionrq.GetOrigin();
+     entry.messageId = detId;                          // 別経路要求ID
+    entry.origin = originA;                           // 判定開始ノード
+    entry.target = targetB;                           // 判定対象
     entry.exNeighborList = detectionrq.GetExclusiveNeighbors();
-    entry.excludedList = excludedList; //バイパスノードリスト
-    entry.target = detectionrq.GetTarget();
+    entry.excludedList = excludedList;
 
-    // まず初期状態ではホップ数未計測（例: -1）
+    // まず初期状態ではホップ数未計測（例: 0）
     for (auto addr : entry.exNeighborList)
     {
-        entry.hopCountMap[addr] = -1;
+        entry.hopCountMap[addr] = 0;
     }
+
+    // ★ originA -> detId で保存（RREQごとに複製しない）
+    m_step2EntryByOrigin[originA][detId] = entry;
+
+    uint16_t ttl = 7;
 
     //自ノード以外の排他的隣接ノードに別経路要求メッセージを送信
     for(auto dst : detectionrq.GetExclusiveNeighbors())
@@ -5266,8 +5518,6 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
         //排他的隣接ノードがRREQを送信（最大7ホップ）
         RreqHeader rreqHeader;
         rreqHeader.SetDst(dst);
-
-        uint16_t ttl = 7;
 
         //ルーチングテーブルの確認
         RoutingTableEntry rt;
@@ -5294,6 +5544,7 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
         rreqHeader.SetOriginSeqno(m_seqNo);
         m_requestId++;
         rreqHeader.SetId(m_requestId);
+
         rreqHeader.SetAnotherRouteCreateFlag(1);
         rreqHeader.SetExcludedList(excludedList);
         rreqHeader.SetDetectionReqID(detectionrq.GetID());
@@ -5303,106 +5554,238 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
         rreqHeader.SetDstSeqno(0);
         rreqHeader.SetHopCount(0);
 
-        //別経路要求メッセージの情報をキャッシュに入れる
-        m_detectionReqCache[rreqHeader.GetId()] = entry;
+        // ★RREQ ID -> (detId, originA, dstEA) を保存（これが “RREQID→detId” の対応表）
+        m_step2RreqIdMap[m_requestId] = Step2RreqMapValue{detId, originA, dst};
 
         // Send RREQ as subnet directed broadcast from each interface used by aodv
-    for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
-    {
-        Ptr<Socket> socket = j->first;
-        Ipv4InterfaceAddress iface = j->second;
-
-        rreqHeader.SetOrigin(iface.GetLocal());
-        rreqHeader.SetSender(iface.GetLocal());
-        m_rreqIdCache.IsDuplicate(iface.GetLocal(), m_requestId);
-
-        Ptr<Packet> packet = Create<Packet>();
-        SocketIpTtlTag tag;
-        tag.SetTtl(ttl);
-        packet->AddPacketTag(tag);
-        packet->AddHeader(rreqHeader);
-        TypeHeader tHeader(AODVTYPE_RREQ);
-        packet->AddHeader(tHeader);
-        // Send to all-hosts broadcast if on /32 addr, subnet-directed otherwise
-        Ipv4Address destination;
-        if (iface.GetMask() == Ipv4Mask::GetOnes())
+        for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
         {
-            destination = Ipv4Address("255.255.255.255");
+            Ptr<Socket> socket = j->first;
+            Ipv4InterfaceAddress iface = j->second;
+
+            rreqHeader.SetOrigin(iface.GetLocal());
+            rreqHeader.SetSender(iface.GetLocal());
+            m_rreqIdCache.IsDuplicate(iface.GetLocal(), m_requestId);
+
+            Ptr<Packet> packet = Create<Packet>();
+            SocketIpTtlTag tag;
+            tag.SetTtl(ttl);
+            packet->AddPacketTag(tag);
+            packet->AddHeader(rreqHeader);
+            TypeHeader tHeader(AODVTYPE_RREQ);
+            packet->AddHeader(tHeader);
+            // Send to all-hosts broadcast if on /32 addr, subnet-directed otherwise
+            Ipv4Address destination;
+            if (iface.GetMask() == Ipv4Mask::GetOnes())
+            {
+                destination = Ipv4Address("255.255.255.255");
+            }
+            else
+            {
+                destination = iface.GetBroadcast();
+            }
+            NS_LOG_DEBUG("Send RREQ with id " << rreqHeader.GetId() << " to socket");
+            m_lastBcastTime = Simulator::Now();
+            Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
+                                &RoutingProtocol::SendTo,
+                                this,
+                                socket,
+                                packet,
+                                destination);
+        }
+    }
+
+    Time wait = 2 * m_nodeTraversalTime * (ttl + m_timeoutBuffer) + MilliSeconds(50);
+
+    NS_LOG_DEBUG("[Step2] schedule Step2ResultTimeout detId=" << detId
+                 << " after " << wait.As(Time::S));
+
+    Simulator::Schedule(wait,
+                        &RoutingProtocol::Step2ResultTimeout,
+                        this,
+                        originA,      // ★追加：originA を渡す
+                        detId,
+                        receiver);    // reporter(EA)
+}
+
+void
+RoutingProtocol::Step2ResultTimeout(Ipv4Address originA, uint32_t detId, Ipv4Address reporter)
+{
+    auto itO = m_step2EntryByOrigin.find(originA);
+    if (itO == m_step2EntryByOrigin.end())
+    {
+        return;
+    }
+
+    auto itE = itO->second.find(detId);
+    if (itE == itO->second.end())
+    {
+        return;
+    }
+
+    DetectionReqEntry& entry = itE->second;
+
+    // hopCountMap(int) -> hopList(uint8_t) に変換
+    std::map<Ipv4Address, uint8_t> hopList;
+    for (const auto& kv : entry.hopCountMap)
+    {
+        // kv.second が -1 なら unknown
+        if (kv.second < 0)
+        {
+            hopList[kv.first] = 0; // 0xFF
         }
         else
         {
-            destination = iface.GetBroadcast();
+            hopList[kv.first] =kv.second;
         }
-        NS_LOG_DEBUG("Send RREQ with id " << rreqHeader.GetId() << " to socket");
-        m_lastBcastTime = Simulator::Now();
-        Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
-                            &RoutingProtocol::SendTo,
-                            this,
-                            socket,
-                            packet,
-                            destination);
     }
 
-        // --- 一時的に別経路RREQを構築・送信 ---
-        // SendRequest(dst, /*isAltRoute=*/true, excludedList, entry.messageId);
+    NS_LOG_INFO("[Step2] timeout reached. send Step2Result detId=" << detId
+                << " originA=" << entry.origin
+                << " targetB=" << entry.target
+                << " reporter=" << reporter
+                << " remainEA=" << entry.exNeighborList.size());
 
-    //     // RREQを設定
-    //     //メッセージヘッダを作成
-    //     RreqHeader rreqHeader;
-    //     rreqHeader.SetDstSeqno(0);
-    //     rreqHeader.SetHopCount(0);
-    //     rreqHeader.SetOrigin(receiver);
-    //     rreqHeader.SetGratuitousRrep(false);
-    //     rreqHeader.SetDestinationOnly(true);
-    //     rreqHeader.SetUnknownSeqno(true);
-    //     rreqHeader.SetAnotherRouteCreateFlag(true);
-    //     rreqHeader.SetExcludedList(excludedList);
-    //     rreqHeader.SetDst(dst);
-    //     //RREQIDを設定
-    //     rreqHeader.SetId(m_requestId++);
+    // あなたの SendStep2Result のシグネチャに合わせて呼び出し
+    // 例：Step2ResultHeaderに reporter を入れる設計なら reporter も渡す版が自然
+    SendStep2Result(originA, entry.target, detId, hopList);
 
-    //     Ptr<Packet> packet = Create<Packet>();
-    //     SocketIpTtlTag tag;
-    //     tag.SetTtl(5);
-    //     packet->AddPacketTag(tag);
-    //     packet->AddHeader(rreqHeader);
-    //     TypeHeader tHeader(AODVTYPE_RREQ);
-    //     packet->AddHeader(tHeader);
-
-    //     //別経路作成用のRREQをブロードキャスト
-    //     for (auto j = m_socketAddresses.begin(); j != m_socketAddresses.end(); ++j)
-    //     {
-    //         Ptr<Socket> socket = j->first;
-    //         Ipv4InterfaceAddress iface = j->second;
-
-    //         rreqHeader.SetOrigin(iface.GetLocal());
-    //         Ipv4Address destination;
-    //         if (iface.GetMask() == Ipv4Mask::GetOnes())
-    //         {
-    //             destination = Ipv4Address("255.255.255.255");
-    //         }
-    //         else
-    //         {
-    //             destination = iface.GetBroadcast();
-    //         }
-
-    //         NS_LOG_DEBUG("別経路RREQを送信： " << iface.GetLocal()
-    //                      << " -> " << destination
-    //                      << " (宛先EA=" << dst << ") TTL=5");
-            
-    //         //socket->SetIpTtl(5); // ★確実なTTL制御
-            
-    //         m_lastBcastTime = Simulator::Now();
-    //         Simulator::Schedule(MilliSeconds(m_uniformRandomVariable->GetInteger(0, 10)),
-    //                         &RoutingProtocol::SendTo,
-    //                         this,
-    //                         socket,
-    //                         packet,
-    //                         destination);
-    //     }
-        
+    // セッション終了（必要なら残してもOK）
+    itO->second.erase(itE);
+    if (itO->second.empty())
+    {
+        m_step2EntryByOrigin.erase(itO);
     }
 }
+
+void
+RoutingProtocol::EvaluateStep2AndAct(uint32_t detId, bool timedOut)
+{
+    auto it = m_step2Collect.find(detId);
+    if (it == m_step2Collect.end())
+    {
+        return;
+    }
+
+    Step2CollectEntry& sess = it->second;
+
+    const uint8_t TH = 4; // しきい値
+    bool wormhole = false;
+
+    uint32_t usedCount = 0;    // 判定に使った hop 数
+    uint32_t ignoredCount = 0; // unknown 等で無視した数
+
+    // reports: reporterEA -> (相手EA -> hop)
+    for (const auto& rep : sess.reports)
+    {
+        const Ipv4Address reporter = rep.first;
+        const auto& hopMap = rep.second;
+
+        for (const auto& kv : hopMap)
+        {
+            const Ipv4Address peer = kv.first;
+            const uint8_t hop = kv.second;
+
+            // 計測不可は無視
+            if (hop == Step2ResultHeader::HOP_UNKNOWN)
+            {
+                ignoredCount++;
+                continue;
+            }
+
+            usedCount++;
+
+            if (hop > TH)
+            {
+                wormhole = true;
+                NS_LOG_INFO("[Step2] hop>TH detected detId=" << detId
+                            << " reporter=" << reporter
+                            << " peer=" << peer
+                            << " hop=" << unsigned(hop)
+                            << " TH=" << unsigned(TH));
+                break;
+            }
+        }
+
+        if (wormhole)
+        {
+            break;
+        }
+    }
+
+    NS_LOG_INFO("[Step2] Evaluate detId=" << detId
+                << " targetB=" << sess.targetB
+                << " timedOut=" << timedOut
+                << " used=" << usedCount
+                << " ignored=" << ignoredCount
+                << " wormhole=" << wormhole);
+
+    if (wormhole)
+    {
+        // ---- WH と判定：ブラックリスト登録（targetB を登録する例） ----
+        m_blacklist.insert(sess.targetB);
+
+        // 可能なら経路も削除（任意）
+        // m_routingTable.DeleteRoute(sess.targetB);
+
+        NS_LOG_WARN("[Step2] Wormhole 판단. targetB blacklisted: " << sess.targetB);
+
+        // セッション終了
+        m_step2Collect.erase(it);
+        return;
+    }
+
+    // ---- すべて(使えた測定値)が <=4 → Step3へ ----
+    NS_LOG_INFO("[Step2] Safe (<=4 for all measured hops). Go to Step3. detId=" << detId);
+
+    // ★ここをあなたの Step3 開始処理に置き換えてください
+    // StartStep3(sess.targetB, detId, sess.reports);
+    // 例：SendVerificationStart(...) / SendStep3Start(...) など
+
+    m_step2Collect.erase(it);
+
+    //自身の隣接ノードリストを取得
+    std::set<Ipv4Address> neighborList; //自身の隣接ノードリスト
+
+    for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
+    it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
+    {
+        const RoutingTableEntry& e = it->second;
+        if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
+        {
+            // NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination());
+            neighborList.insert(e.GetDestination());
+        }
+    }
+
+    //判定対象ノードの隣接ノードリスト
+    std::set<Ipv4Address> NB = sess.NB;
+
+    //共通隣接ノードリストを作製
+    std::set<Ipv4Address> commonNeighbors;
+    //排他的隣接ノードリストと共通隣接ノードリストを作成
+        for (const auto& n : neighborList)
+        {
+            // B 自身は EA から除外
+            if (n == sess.targetB)
+            {
+                continue;
+            }
+            // NB に含まれていないノードのみ EA に入れる
+            if (NB.find(n) != NB.end())
+            {
+                NS_LOG_DEBUG("判定開始ノード：" << sess.originA << "　判定対象ノード：" << sess.targetB <<
+                             "　の共通隣接ノードを追加：" << n);
+
+                commonNeighbors.insert(n);
+            }
+        }
+
+    StartStep3Detection(sess.originA, sess.targetB, neighborList, NB, commonNeighbors, sess.isRebroadcasted);
+    
+    return;
+}
+
 
 // //内部WH攻撃 helloメッセージ転送関数（中継ノード用）
 // void

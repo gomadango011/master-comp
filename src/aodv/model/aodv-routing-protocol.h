@@ -377,6 +377,39 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     // メッセージIDごとにDetectionReq情報を保存
     std::unordered_map<uint32_t, DetectionReqEntry> m_detectionReqCache;
 
+    // (originA) -> (detId) -> entry（判定開始ノードへ送るための集約データ）
+    std::map<Ipv4Address, std::map<uint32_t, DetectionReqEntry>> m_step2EntryByOrigin;
+
+    // RREQ ID -> (detId, originA, dstEA) への対応表
+    struct Step2RreqMapValue
+    {
+        uint32_t detId;
+        Ipv4Address originA;
+        Ipv4Address dstEa;   // このRREQの宛先EA（後でどれを消すかに使う）
+    };
+    std::map<uint32_t, Step2RreqMapValue> m_step2RreqIdMap;
+
+    // 判定開始ノード(originA)側で Step2Result を集約するセッション
+    struct Step2CollectEntry
+    {
+        Ipv4Address originA;
+        Ipv4Address targetB;
+        uint32_t detId;
+
+        std::set<Ipv4Address> pendingEas; // まだ結果が来ていないEA
+        std::map<Ipv4Address, std::map<Ipv4Address, uint8_t>> reports; // reporterEA -> hopMap
+
+        EventId timeoutEvent; // タイムアウトイベント
+
+        // ステップ3用の情報
+        std::set<Ipv4Address> NB;  // targetB の隣接ノード一覧
+        bool isRebroadcasted = false; // targetB が WH 攻撃者か
+    };
+
+    // detId -> 集約セッション
+    std::map<uint32_t, Step2CollectEntry> m_step2Collect;
+
+
     // ローカルグラフ：各ノード → その隣接ノード一覧
     std::map<Ipv4Address, std::set<Ipv4Address>> m_localGraph;
 
@@ -560,9 +593,22 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     void ForwardHelloByIntermediateNode(const RrepHeader& rrepHeader);
 
     //内部WH攻撃　WH攻撃検知開始 →　隣接ノードリスト要求メッセージ送信
-    void SendDetectionReq_to_ExNeighbors(const RrepHeader& rrepHeader, const Ipv4Address receiver, const std::set<Ipv4Address> Exneighbors);
+    void SendDetectionReq_to_ExNeighbors(const RrepHeader& rrepHeader, 
+                                         const Ipv4Address receiver, 
+                                         const std::set<Ipv4Address> Exneighbors,
+                                         const std::set<Ipv4Address> NB,
+                                         bool isRebroadcasted
+                                        );
 
-    void RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src);
+    //ステップ2　集約結果タイムアウト処理
+    void Step2CollectTimeout(uint32_t detId);
+
+    void RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool m_isWhForwardedPacket);
+
+    void Step2ResultTimeout(Ipv4Address originA, uint32_t detId, Ipv4Address reporter);
+
+    //ステップ2　集約結果評価・判定処理
+    void EvaluateStep2AndAct(uint32_t detId, bool timedOut);
 
     //排他的隣接ノードがRREQを送信
     void SendReq_by_Exnode();
@@ -696,8 +742,10 @@ class RoutingProtocol : public Ipv4RoutingProtocol
     void SendStep2Result(Ipv4Address originA,
                                  Ipv4Address targetB,
                                  uint32_t detId,
-                                 const std::map<Ipv4Address, int>& hopCountMap);
+                                 const std::map<Ipv4Address, uint8_t>& hopCountMap);
     
+    void RecvStep2Result(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address src, bool fromWh);
+
     /**
      * ステップ3　共通隣接ノードに監視を要求するメッセージを受信した場合の処理
      * @param p packet

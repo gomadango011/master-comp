@@ -44,7 +44,8 @@ enum MessageType
     AODVTYPE_AUTH = 6,    //ステップ３認証パケット用
     AODVTYPE_AUTHREP = 7,
     AODVTYPE_STEP3RESULT = 8,
-    AODVTYPE_DetecReq = 9
+    AODVTYPE_DetecReq = 9,  // ステップ２別経路要求パケット用
+    AODVTYPE_Detecrep = 10 // ステップ２別経路要求パケット用
 };
 
 /**
@@ -471,8 +472,7 @@ class RrepHeader : public Header
                uint8_t WHForwardFlag = 0,
                uint32_t NeighborCount = 0,
                double NeighborRatio = 0.0,
-               std::set<Ipv4Address> neighborList = std::set<Ipv4Address>(),
-               
+               std::set<Ipv4Address> neighborList = std::set<Ipv4Address>()
                );
     /**
      * @brief Get the type ID.
@@ -1177,6 +1177,78 @@ private:
 };
 
 std::ostream &operator<<(std::ostream &os, const DetectionRreqHeader &h);
+
+#include <map>
+
+//-----------------------------------------------------------------------------
+// Step2ResultHeader
+//-----------------------------------------------------------------------------
+class Step2ResultHeader : public Header
+{
+public:
+    static constexpr uint8_t HOP_UNKNOWN = 0;
+
+    // 空mapのデフォルト参照を作る（参照の寿命問題を回避）
+    static const std::map<ns3::Ipv4Address, uint8_t>& EmptyHopList()
+    {
+        static const std::map<ns3::Ipv4Address, uint8_t> empty;
+        return empty;
+    }
+
+    Step2ResultHeader(Ipv4Address originA = Ipv4Address(),
+                      Ipv4Address targetB = Ipv4Address(),
+                      Ipv4Address reporter = Ipv4Address(),
+                      uint32_t detId = 0,
+                      const std::map<ns3::Ipv4Address, uint8_t>& hopList = EmptyHopList());
+
+    static TypeId GetTypeId();
+    virtual TypeId GetInstanceTypeId() const override;
+
+    void SetOriginA(Ipv4Address a) { m_originA = a; }
+    void SetTargetB(Ipv4Address a) { m_targetB = a; }
+    void SetReporter(Ipv4Address a) { m_reporter = a; }
+    void SetDetId(uint32_t id) { m_detId = id; }
+
+    void SetHopList(const std::map<ns3::Ipv4Address, uint8_t>& hopList)
+    {
+        m_hopList = hopList;
+    }
+
+    Ipv4Address GetOriginA() const { return m_originA; }
+    Ipv4Address GetTargetB() const { return m_targetB; }
+    Ipv4Address GetReporter() const { return m_reporter; }
+    uint32_t GetDetId() const { return m_detId; }
+
+    const std::map<ns3::Ipv4Address, uint8_t>& GetHopList() const
+    {
+        return m_hopList;
+    }
+
+    void ClearHopList() { m_hopList.clear(); }
+
+    // hopは uint8_t に合わせる（最大255ホップ想定）
+    void AddHop(Ipv4Address ea, uint8_t hop)
+    {
+        m_hopList[ea] = hop;
+    }
+
+    virtual uint32_t GetSerializedSize() const override;
+    virtual void Serialize(Buffer::Iterator start) const override;
+    virtual uint32_t Deserialize(Buffer::Iterator start) override;
+    virtual void Print(std::ostream& os) const override;
+
+private:
+    Ipv4Address m_originA;
+    Ipv4Address m_targetB;
+    Ipv4Address m_reporter;
+    uint32_t m_detId;
+
+    std::map<ns3::Ipv4Address, uint8_t> m_hopList;
+};
+
+std::ostream& operator<<(std::ostream& os, const Step2ResultHeader& h);
+
+
 
 
 } // namespace aodv
