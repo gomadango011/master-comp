@@ -136,7 +136,7 @@ main(int argc, char** argv)
 
 //-----------------------------------------------------------------------------
 AodvExample::AodvExample()
-    : size(4),
+    : size(8),
       step(50),
       totalTime(30),
       pcap(true),
@@ -222,7 +222,14 @@ AodvExample::CreateNodes()
     AnimationInterface::SetConstantPosition (nodes.Get (0), 0, 0);
     AnimationInterface::SetConstantPosition (nodes.Get (1), 50, 0);  //WHノード
     AnimationInterface::SetConstantPosition (nodes.Get (2), 150, 0); //WHノード
-    AnimationInterface::SetConstantPosition (nodes.Get (3), 200, 0);
+
+    AnimationInterface::SetConstantPosition (nodes.Get (3), -20, 20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (4), -20, -20); //WHノード
+
+    AnimationInterface::SetConstantPosition (nodes.Get (5), 220, 20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (6), 220, -20); //WHノード
+
+    AnimationInterface::SetConstantPosition (nodes.Get (7), 200, 0);
     // AnimationInterface::SetConstantPosition (nodes.Get (4), -20, 20);
     // AnimationInterface::SetConstantPosition (nodes.Get (5), -20, -20);
     // AnimationInterface::SetConstantPosition (nodes.Get (6), 220, 20);

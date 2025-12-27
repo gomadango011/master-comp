@@ -409,9 +409,9 @@ class RreqHeader : public Header
     Ipv4Address m_sender;   ///< RREQ送信ノードのIPアドレス
     uint8_t m_WHForwardFlag;///< 内部WH攻撃用転送フラグ
     bool m_AnotherRouteCreateFlag; ///< 別経路構築用のフラグ
-    std::set<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
     uint32_t m_DetectionReqID;
     Ipv4Address m_detection_origin;
+    std::set<Ipv4Address> m_ExcludedList; ///< RREQを受信した場合メッセージを破棄するノードリスト（検知対象の隣接ノードリスト）
 };
 
 /**
@@ -1186,7 +1186,7 @@ std::ostream &operator<<(std::ostream &os, const DetectionRreqHeader &h);
 class Step2ResultHeader : public Header
 {
 public:
-    static constexpr uint8_t HOP_UNKNOWN = 0;
+    static constexpr uint8_t HOP_UNKNOWN = 0xFF;
 
     // 空mapのデフォルト参照を作る（参照の寿命問題を回避）
     static const std::map<ns3::Ipv4Address, uint8_t>& EmptyHopList()

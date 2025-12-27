@@ -175,11 +175,12 @@ RoutingProtocol::RoutingProtocol()
       m_step3ReplyWaitTime(8*m_nodeTraversalTime),
       m_isWhNode(false),          // WH ノードフラグを初期化
       m_whPeerIp(Ipv4Address()), // WH 相方ノード
+      m_anotherRouteID(0),
       m_htimer(Timer::CANCEL_ON_DESTROY),
       m_rreqRateLimitTimer(Timer::CANCEL_ON_DESTROY),
       m_rerrRateLimitTimer(Timer::CANCEL_ON_DESTROY),
-      m_lastBcastTime(),
-      m_anotherRouteID(0)
+      m_lastBcastTime()
+      
 {
     m_nb.SetCallback(MakeCallback(&RoutingProtocol::SendRerrWhenBreaksLinkToNextHop, this));
 }
@@ -2471,6 +2472,8 @@ RoutingProtocol::RecvReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address send
         //別経路要求用のRREPの場合
         if(rrepHeader.GetAnotherRouteCreateFlag())
         {   
+            NS_LOG_DEBUG("別経路要求用RREPを受信しました。Step2処理を実行します。");
+
             const uint32_t rreqId = rrepHeader.GetMessageID(); // ←RREQ ID
             auto itMap = m_step2RreqIdMap.find(rreqId);
             if (itMap == m_step2RreqIdMap.end())
@@ -2796,8 +2799,8 @@ RoutingProtocol::SendStep2Result(Ipv4Address originA,
 
     Step2ResultHeader step2ResultHeader(
         /*別経路要求メッセージの送信元*/originA,
-        /*このメッセージの送信ノード*/m_ipv4->GetAddress(1, 0).GetLocal(),
         /*検知対象ノード*/targetB,
+        /*このメッセージの送信ノード*/m_ipv4->GetAddress(1, 0).GetLocal(),
         /*別経路要求用のID*/detId,
         /*ホップ数マップ*/hopCountMap
     );
@@ -3174,7 +3177,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         NS_LOG_DEBUG("WHリンクの隣接ノード比率：" << rB);
     }
     
-    double myNeighborCount = static_cast<double>(neighborList.size());
+    // double myNeighborCount = static_cast<double>(neighborList.size());
     double sumNeighborCount = 0.0;  //Aの隣接ノードの隣接ノード数
     uint32_t validNeighborNum = 0;  //Aの隣接ノード数
 
@@ -3201,7 +3204,10 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
 
     //今日ノードの隣接ノード比率が閾値以下の場合，ステップ2を開始
     if(rB > m_whNeighborThreshold && rA > m_whNeighborThreshold)
-    {    
+    {
+        NS_LOG_DEBUG("隣接ノード比率がしきい値を超えているため、ステップ2検知を開始"
+                     << " rA=" << rA << " rB=" << rB
+                     << " Th=" << m_whNeighborThreshold);
         //排他的隣接ノードリストと共通隣接ノードリストを作成
         std::set<Ipv4Address> exclusiveNeighbors;   //排他的隣接ノードリスト
         std::set<Ipv4Address> commonNeighbors;
@@ -5341,6 +5347,12 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader,
 
     std::set<Ipv4Address> targetNeighborList = rrepHeader.GetNeighborList(); //検知対象ノードの隣接ノードリスト
 
+    NS_LOG_DEBUG("Exneighbors size=" << Exneighbors.size());
+    for (const auto& addr : Exneighbors)
+    {
+        NS_LOG_DEBUG("  排他的隣接ノード: " << addr);
+    }
+
     //ノードIDと排他的隣接ノードのリスト、それぞれの隣接ノードの検知結果を保存する構造体を作成
 
     const uint32_t detid = m_anotherRouteID++;
@@ -5484,6 +5496,14 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
                  << " の別経路要求(DetectionReq)を受信");
 
     std::set<Ipv4Address> excludedList = detectionrq.GetTargetNeighborList();
+
+    // 自身のIPアドレスが排他的隣接ノードリストに含まれていない場合、メッセージを破棄
+    if(detectionrq.GetExclusiveNeighbors().find(receiver) == detectionrq.GetExclusiveNeighbors().end())
+    {
+        NS_LOG_DEBUG("自身のIPアドレスが排他的隣接ノードリストに含まれていません。メッセージを破棄します。");
+        return;
+    }
+
     excludedList.insert(targetB);
 
     DetectionReqEntry entry;
@@ -5493,10 +5513,10 @@ RoutingProtocol::RecvDetectionReq(Ptr<Packet> p, Ipv4Address receiver, Ipv4Addre
     entry.exNeighborList = detectionrq.GetExclusiveNeighbors();
     entry.excludedList = excludedList;
 
-    // まず初期状態ではホップ数未計測（例: 0）
+    // まず初期状態ではホップ数未計測（例: 0xFF）
     for (auto addr : entry.exNeighborList)
     {
-        entry.hopCountMap[addr] = 0;
+        entry.hopCountMap[addr] = Step2ResultHeader::HOP_UNKNOWN;
     }
 
     // ★ originA -> detId で保存（RREQごとに複製しない）
@@ -5632,7 +5652,7 @@ RoutingProtocol::Step2ResultTimeout(Ipv4Address originA, uint32_t detId, Ipv4Add
         // kv.second が -1 なら unknown
         if (kv.second < 0)
         {
-            hopList[kv.first] = 0; // 0xFF
+            hopList[kv.first] = Step2ResultHeader::HOP_UNKNOWN; // 0xFF
         }
         else
         {
@@ -5685,6 +5705,11 @@ RoutingProtocol::EvaluateStep2AndAct(uint32_t detId, bool timedOut)
         {
             const Ipv4Address peer = kv.first;
             const uint8_t hop = kv.second;
+
+            NS_LOG_DEBUG("[Step2] 別経路ID=" << detId
+                          << " reporter=" << reporter
+                          << " peer=" << peer
+                          << " hop=" << unsigned(hop));
 
             // 計測不可は無視
             if (hop == Step2ResultHeader::HOP_UNKNOWN)
@@ -5764,22 +5789,22 @@ RoutingProtocol::EvaluateStep2AndAct(uint32_t detId, bool timedOut)
     //共通隣接ノードリストを作製
     std::set<Ipv4Address> commonNeighbors;
     //排他的隣接ノードリストと共通隣接ノードリストを作成
-        for (const auto& n : neighborList)
+    for (const auto& n : neighborList)
+    {
+        // B 自身は EA から除外
+        if (n == sess.targetB)
         {
-            // B 自身は EA から除外
-            if (n == sess.targetB)
-            {
-                continue;
-            }
-            // NB に含まれていないノードのみ EA に入れる
-            if (NB.find(n) != NB.end())
-            {
-                NS_LOG_DEBUG("判定開始ノード：" << sess.originA << "　判定対象ノード：" << sess.targetB <<
-                             "　の共通隣接ノードを追加：" << n);
-
-                commonNeighbors.insert(n);
-            }
+            continue;
         }
+        // NB に含まれていないノードのみ EA に入れる
+        if (NB.find(n) != NB.end())
+        {
+            NS_LOG_DEBUG("判定開始ノード：" << sess.originA << "　判定対象ノード：" << sess.targetB <<
+                            "　の共通隣接ノードを追加：" << n);
+
+            commonNeighbors.insert(n);
+        }
+    }
 
     StartStep3Detection(sess.originA, sess.targetB, neighborList, NB, commonNeighbors, sess.isRebroadcasted);
     
@@ -6205,6 +6230,7 @@ RoutingProtocol::SendHello()
                                /*sender=*/iface.GetLocal(),
                                /*lifetime=*/Time(m_allowedHelloLoss * m_helloInterval),
                                /*messageID*/0,
+                               /*別経路構築フラグ*/0,
                                /*whForwardFlag=*/0,//通常のHelloメッセージとして設定
                                 /*neighborCount=*/neigborCount,
                                 /*neighborRatio=*/neighborRatio
