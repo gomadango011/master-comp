@@ -258,7 +258,7 @@ int main(int argc, char** argv)
 
 //-----------------------------------------------------------------------------
 AodvExample::AodvExample()
-    : size(400),
+    : size(600),
       step(),
       totalTime(10),
       //pcapファイルでログを取得したい場合はtrueにする
@@ -267,8 +267,8 @@ AodvExample::AodvExample()
       RREP_log(1),  //RREPのログを取得(1:ログ取得、0:ログ取得しない)
       result_file("deff/p-log.csv"), //結果を保存するファイル
       result_mode(2),
-      WH_size(300),
-      end_distance(800), //エンド間の距離
+      WH_size(500),
+      end_distance(1000), //エンド間の距離
       iteration(1) //イテレーション
 {
 }
@@ -457,9 +457,9 @@ AodvExample::CreateNodes()
     Ptr<PositionAllocator> positionAlloc =
         CreateObject<RandomRectanglePositionAllocator>();
     positionAlloc->SetAttribute("X",
-        StringValue("ns3::UniformRandomVariable[Min=0|Max=800]"));
+        StringValue("ns3::UniformRandomVariable[Min=0|Max=1000]"));
     positionAlloc->SetAttribute("Y",
-        StringValue("ns3::UniformRandomVariable[Min=0|Max=800]"));
+        StringValue("ns3::UniformRandomVariable[Min=0|Max=1000]"));
 
     // ===============================
     // 自動車ノード（11–16 m/s）
@@ -512,18 +512,18 @@ AodvExample::CreateNodes()
 
     // 固定ノードの位置を設定
     Ptr<ListPositionAllocator> fixedpositionAlloc = CreateObject<ListPositionAllocator>();
-    fixedpositionAlloc->Add(Vector(0, 400, 0));  //送信者の位置情報　ID=0
+    fixedpositionAlloc->Add(Vector(0, 500, 0));  //送信者の位置情報　ID=0
 
-    fixedpositionAlloc->Add(Vector(end_distance - WH_size - 150, 400, 0));  //WH1の位置情報　ID:1
-    fixedpositionAlloc->Add(Vector(end_distance - 150, 400, 0));  //WH2の位置情報            ID:2
+    fixedpositionAlloc->Add(Vector(end_distance - WH_size - 150, 500, 0));  //WH1の位置情報　ID:1
+    fixedpositionAlloc->Add(Vector(end_distance - 150, 500, 0));  //WH2の位置情報            ID:2
 
-    fixedpositionAlloc->Add(Vector(0, 500, 0));  //送信ノード２            ID:3
-    fixedpositionAlloc->Add(Vector(end_distance, 300, 0));  //受信ノード2         ID:4
+    fixedpositionAlloc->Add(Vector(0, 600, 0));  //送信ノード２            ID:3
+    fixedpositionAlloc->Add(Vector(end_distance, 400, 0));  //受信ノード2         ID:4
 
     fixedpositionAlloc->Add(Vector(0, 300, 0));  //送信ノード３           ID:5
-    fixedpositionAlloc->Add(Vector(end_distance, 500, 0));  //受信者ノード3  ID:6
+    fixedpositionAlloc->Add(Vector(end_distance, 600, 0));  //受信者ノード3  ID:6
     
-    fixedpositionAlloc->Add(Vector(end_distance, 400, 0));  //受信者の位置情報  ID=size-1
+    fixedpositionAlloc->Add(Vector(end_distance, 500, 0));  //受信者の位置情報  ID=size-1
 
     fixedMobility.SetPositionAllocator(fixedpositionAlloc);
     

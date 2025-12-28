@@ -19,9 +19,14 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/animation-interface.h"
 
+#include <fstream>
+#include <filesystem>
+#include <limits.h>
+#include <stdio.h>
 #include <cmath>
 #include <iostream>
 
+namespace fs = std::filesystem;
 using namespace ns3;
 
 /**
@@ -46,6 +51,30 @@ using namespace ns3;
  * stopping ping replies reception after sequence number 33. If the step size is reduced
  * to cover the gap, then also the following pings can be received.
  */
+
+ std::ofstream ofs;
+
+//ファイルを更新または作成
+void
+OpenLogFileOverwrite(std::ofstream& ofs, const std::string& filepath)
+{
+    fs::path p(filepath);
+
+    // 親ディレクトリが無ければ作成
+    if (!p.parent_path().empty())
+    {
+        fs::create_directories(p.parent_path());
+    }
+
+    // 上書きモードで open（存在すれば中身は消える）
+    ofs.open(filepath, std::ios::out | std::ios::app);
+
+    if (!ofs.is_open())
+    {
+        NS_FATAL_ERROR("Cannot open result file: " << filepath);
+    }
+}
+
 class AodvExample
 {
   public:
@@ -130,13 +159,13 @@ main(int argc, char** argv)
     }
 
     test.Run();
-    test.Report(std::cout);
+    // test.Report(std::cout);
     return 0;
 }
 
 //-----------------------------------------------------------------------------
 AodvExample::AodvExample()
-    : size(8),
+    : size(9),
       step(50),
       totalTime(30),
       pcap(true),
@@ -150,7 +179,7 @@ AodvExample::Configure(int argc, char** argv)
     // Enable AODV logs by default. Comment this if too noisy
     // LogComponentEnable("AodvRoutingProtocol", LOG_LEVEL_ALL);
 
-    SeedManager::SetSeed(12345);
+    SeedManager::SetSeed(1);
     CommandLine cmd(__FILE__);
 
     cmd.AddValue("pcap", "Write PCAP traces.", pcap);
@@ -193,12 +222,84 @@ AodvExample::Run()
 
     Simulator::Stop(Seconds(totalTime));
     Simulator::Run();
+    Report(std::cout);
     Simulator::Destroy();
 }
 
 void
-AodvExample::Report(std::ostream&)
+AodvExample::Report(std::ostream& os)
 {
+    // ★ 出力ファイルを開く（追記 or 上書き）
+    OpenLogFileOverwrite(ofs,"deff/p-log-test.csv");
+
+    uint32_t totalTP = 0, totalFN = 0, totalFP = 0, totalTN = 0, totalNA = 0;
+    uint64_t totalBytes = 0;
+    std::vector<double> latencies;
+
+    // ===== ヘッダはファイルが空のときだけ =====
+    static bool headerWritten = false;
+    if (!headerWritten)
+    {
+        ofs << "seed,nodes,wh_mode,end_distance,"
+            << "tp,fn,fp,tn,"
+            << "wh_detection_rate,false_positive_rate,"
+            << "total_ctrl_bytes,avg_route_latency\n";
+        headerWritten = true;
+    }
+
+    for (uint32_t i = 0; i < nodes.GetN(); i++)
+    {
+        Ptr<Ipv4> ipv4 = nodes.Get(i)->GetObject<Ipv4>();
+        Ptr<Ipv4RoutingProtocol> rp = ipv4->GetRoutingProtocol();
+        Ptr<aodv::RoutingProtocol> aodv = DynamicCast<aodv::RoutingProtocol>(rp);
+        if (!aodv) continue;
+
+        auto stats = aodv->Getevaluation();
+
+        totalTP += stats.detectedWh;
+        totalFN += stats.undetectedWh;
+        totalFP += stats.falsePositive;
+        totalTN += stats.truenegative;
+        totalNA += stats.notApplicable;
+        totalBytes += stats.totalAodvCtrlBytes;
+
+        for (const auto &kv : stats.m_latencyTable)
+        {
+            const auto &entry = kv.second;
+            if (entry.latency.GetSeconds() > 0)
+                latencies.push_back(entry.latency.GetSeconds());
+        }
+    }
+
+    double detectionRate = (totalTP + totalFN > 0)
+                           ? (double)totalTP / (totalTP + totalFN)
+                           : 0.0;
+
+    double falsePositiveRate = (totalFP + totalTN > 0)
+                               ? (double)totalFP / (totalFP + totalTN)
+                               : 0.0;
+
+    double avgLatency = 0.0;
+    if (!latencies.empty()) {
+        double sum = 0;
+        for (double v : latencies) sum += v;
+        avgLatency = sum / latencies.size();
+    }
+
+     ofs << 1 << ","
+        << size << ","
+        << 2 << ","               // WhMode
+        << 200 << ","
+        << totalTP << ","
+        << totalFN << ","
+        << totalFP << ","
+        << totalTN << ","
+        << detectionRate << ","
+        << falsePositiveRate << ","
+        << totalBytes << ","
+        << avgLatency << "\n";
+
+    ofs.close();
 }
 
 void
@@ -223,13 +324,14 @@ AodvExample::CreateNodes()
     AnimationInterface::SetConstantPosition (nodes.Get (1), 50, 0);  //WHノード
     AnimationInterface::SetConstantPosition (nodes.Get (2), 150, 0); //WHノード
 
-    AnimationInterface::SetConstantPosition (nodes.Get (3), -20, 20); //WHノード
-    AnimationInterface::SetConstantPosition (nodes.Get (4), -20, -20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (3), -10, 20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (4), -10, -20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (5), -20, 0); //WHノード
 
-    AnimationInterface::SetConstantPosition (nodes.Get (5), 220, 20); //WHノード
-    AnimationInterface::SetConstantPosition (nodes.Get (6), 220, -20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (6), 220, 20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (7), 220, -20); //WHノード
 
-    AnimationInterface::SetConstantPosition (nodes.Get (7), 200, 0);
+    AnimationInterface::SetConstantPosition (nodes.Get (8), 200, 0);
     // AnimationInterface::SetConstantPosition (nodes.Get (4), -20, 20);
     // AnimationInterface::SetConstantPosition (nodes.Get (5), -20, -20);
     // AnimationInterface::SetConstantPosition (nodes.Get (6), 220, 20);

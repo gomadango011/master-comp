@@ -148,9 +148,9 @@ main(int argc, char** argv)
 
 //-----------------------------------------------------------------------------
 AodvExample::AodvExample()
-    : size(400),
+    : size(200),
       step(50),
-      totalTime(10),
+      totalTime(20),
       pcap(true),
       printRoutes(true),
       WH_size(300),
@@ -168,7 +168,7 @@ AodvExample::Configure(int argc, char** argv)
     std::random_device randomseed;
     // int rand = randomseed();
 
-    SeedManager::SetSeed(3);
+    SeedManager::SetSeed(1);
 
     CommandLine cmd(__FILE__);
 
@@ -282,7 +282,7 @@ AodvExample::CreateDevices()
     Ptr<YansWifiChannel> wifiChannel = CreateObject<YansWifiChannel> ();
 
     Ptr<RangePropagationLossModel> rangeModel = CreateObject<RangePropagationLossModel> ();
-    rangeModel->SetAttribute ("MaxRange", DoubleValue (50.0)); // 通信範囲を100mに設定
+    rangeModel->SetAttribute ("MaxRange", DoubleValue (100.0)); // 通信範囲を100mに設定
 
     wifiChannel->SetPropagationLossModel(rangeModel);
     wifiChannel->SetPropagationDelayModel(CreateObject<ConstantSpeedPropagationDelayModel>());
