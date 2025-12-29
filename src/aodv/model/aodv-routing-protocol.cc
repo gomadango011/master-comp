@@ -3886,6 +3886,55 @@ RoutingProtocol::PromiscSniff(Ptr<NetDevice> dev,
     // 自分の IP
     Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
 
+
+    // =========================================================
+    // 追加：受信した AODV パケット種別をログ出力（Promisc監視）
+    // =========================================================
+    if(m_isWhNode)
+    {
+        Ptr<Packet> p = packet->Copy();
+
+        Ipv4Header ip;
+        if (p->PeekHeader(ip) && ip.GetProtocol() == UdpL4Protocol::PROT_NUMBER)
+        {
+            // IPv4ヘッダ除去して中身を見る
+            p->RemoveHeader(ip);
+
+            UdpHeader udp;
+            if (p->PeekHeader(udp))
+            {
+                p->RemoveHeader(udp);
+
+                // AODVポート宛のUDPのみをAODVとして扱う
+                if (udp.GetDestinationPort() == AODV_PORT)
+                {
+                    TypeHeader th(AODVTYPE_RREQ);
+                    if (p->PeekHeader(th) && th.IsValid())
+                    {
+                        NS_LOG_DEBUG("[PROMISC] " << myaddr
+                                     << " saw AODV=" << IdentifyAodvType(packet)
+                                     << " proto=" << uint32_t(ip.GetProtocol())
+                                     << " src=" << ip.GetSource()
+                                     << " dst=" << ip.GetDestination()
+                                     << " udpDstPort=" << udp.GetDestinationPort()
+                                     << " devIf=" << dev->GetIfIndex()
+                                     << " pktUid=" << packet->GetUid());
+                    }
+                    else
+                    {
+                        NS_LOG_DEBUG("[PROMISC] " << myaddr
+                                     << " saw UDP(AODV_PORT) but TypeHeader invalid"
+                                     << " ipSrc=" << ip.GetSource()
+                                     << " ipDst=" << ip.GetDestination()
+                                     << " devIf=" << dev->GetIfIndex()
+                                     << " pktUid=" << packet->GetUid());
+                    }
+                }
+            }
+        }
+    }
+    // =========================================================    
+
     Ptr<Packet> pWh    = packet->Copy();   // WH 転送判定用
     Ptr<Packet> pStep3 = packet->Copy();        // 検知用
 
@@ -4871,7 +4920,7 @@ RoutingProtocol::RecvAuthReply(Ptr<Packet> p, Ipv4Address receiver, Ipv4Address 
 
     WhRebroadcastTag whReTag;
     bool isRebroadcasted = false;
-    if (p->RemovePacketTag(whReTag) && whReTag.Get())
+    if (copy->RemovePacketTag(whReTag) && whReTag.Get())
     {
         NS_LOG_DEBUG("WHノードからの再ブロードキャスト認証返送メッセージを受信しました。送信者：" << sender);
         isRebroadcasted = true;
@@ -5230,24 +5279,24 @@ RoutingProtocol::SendAuthReply(Ipv4Address origin,
                  << " が判定開始ノード：" << origin
                  << " へ認証返信メッセージを送信");
 
-    // --- 1. AuthReplyHeader 作成 ---
+    // // --- 1. AuthReplyHeader 作成 ---
     AuthReplyHeader rep;
     rep.SetOrigin(origin);   // 判定開始ノード
     rep.SetTarget(target);   // 判定対象ノード
     rep.SetID(id);
 
-    Ptr<Packet> packet = Create<Packet>();
+    // Ptr<Packet> packet = Create<Packet>();
 
-    // ★ WHに拾わせるため TTL=1 は禁止
-    SocketIpTtlTag ttl;
-    ttl.SetTtl(std::max<uint8_t>(2, m_netDiameter));
-    packet->AddPacketTag(ttl);
+    // // ★ WHに拾わせるため TTL=1 は禁止
+    // SocketIpTtlTag ttl;
+    // ttl.SetTtl(10);
+    // packet->AddPacketTag(ttl);
 
-    // Header 追加
-    packet->AddHeader(rep);
+    // // Header 追加
+    // packet->AddHeader(rep);
 
-    TypeHeader tHeader(AODVTYPE_AUTHREP);
-    packet->AddHeader(tHeader);
+    // TypeHeader tHeader(AODVTYPE_AUTHREP);
+    // packet->AddHeader(tHeader);
 
     NS_LOG_INFO("SendAuthReply(L2-bcast): target=" << target
                 << " → origin=" << origin
@@ -5268,12 +5317,18 @@ RoutingProtocol::SendAuthReply(Ipv4Address origin,
             continue;
         }
 
-        Ptr<Packet> outPkt = packet->Copy();
+        Ptr<Packet> packet = Create<Packet>();
 
-        // TTLタグを確実に付与
-        SocketIpTtlTag ttl2;
-        ttl2.SetTtl(ttl.GetTtl());
-        outPkt->ReplacePacketTag(ttl2);
+        // ★ WHに拾わせるため TTL=1 は禁止
+        SocketIpTtlTag ttl;
+        ttl.SetTtl(10);
+        packet->AddPacketTag(ttl);
+
+        // Header 追加
+        packet->AddHeader(rep);
+
+        TypeHeader tHeader(AODVTYPE_AUTHREP);
+        packet->AddHeader(tHeader);
 
         // ブロードキャストアドレス決定
         Ipv4Address destination;
@@ -5286,12 +5341,12 @@ RoutingProtocol::SendAuthReply(Ipv4Address origin,
             destination = iface.GetBroadcast();
         }
 
-        socket->SendTo(outPkt, 0,
+        socket->SendTo(packet, 0,
                        InetSocketAddress(destination, AODV_PORT));
 
         NS_LOG_DEBUG("SendAuthReply: iface=" << iface.GetLocal()
                      << " bcast=" << destination
-                     << " size=" << outPkt->GetSize());
+                     << " size=" << packet->GetSize());
     }
 }
 

@@ -150,7 +150,7 @@ main(int argc, char** argv)
 AodvExample::AodvExample()
     : size(200),
       step(50),
-      totalTime(20),
+      totalTime(10),
       pcap(true),
       printRoutes(true),
       WH_size(300),
