@@ -3240,10 +3240,15 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     || receiver == Ipv4Address("10.1.2.2")
           )
     {
-        NS_LOG_DEBUG("WHリンクの隣接ノード比率：" << rB);
-
         std::ofstream ofs("test.log", std::ios::out | std::ios::app);
         uint32_t nodeId = GetObject<Node>()->GetId();
+
+        NS_LOG_DEBUG("WHノードの隣接ノード比率が閾値を超えているため、ステップ2検知を開始  ノードID：" << nodeId 
+                     << " A=" << receiver
+                     << " B=" << helloSender
+                     << " rA=" << rA
+                     << " rB=" << rB
+                     << " Th=" << m_whNeighborThreshold);
 
         ofs << "WHリンクの隣接ノード比率  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
         ofs << " A=" << receiver << " B=" << helloSender << " rA=" << rA << " rB=" << rB << std::endl;
@@ -3330,7 +3335,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                     || receiver == Ipv4Address("10.1.2.1")
                     || receiver == Ipv4Address("10.1.2.2"))
                 {
-                    NS_LOG_DEBUG("隣接比率のみの特例ケースにより、WHリンクと判定");
+                    NS_LOG_DEBUG("隣接比率のみの特例ケースにより、WHリンクを正常に判定");
                     std::ofstream ofs("test.log", std::ios::out | std::ios::app);
                     uint32_t nodeId = GetObject<Node>()->GetId();
 
@@ -5953,6 +5958,8 @@ RoutingProtocol::EvaluateStep2AndAct(uint32_t detId, bool timedOut)
             ofs << "別経路によりWH攻撃を正常に判定  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
             ofs << "ターゲットノード：" << targetB << std::endl;
             ofs.close();
+
+            NS_LOG_DEBUG("別経路によりWH攻撃を正常に判定");
 
             //WH攻撃を正常に判定
             m_whStats.detectedWh++;

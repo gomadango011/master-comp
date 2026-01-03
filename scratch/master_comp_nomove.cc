@@ -249,6 +249,16 @@ int main(int argc, char** argv)
         NS_FATAL_ERROR("Configuration failed. Aborted.");
     }
 
+    std::string path = "test.log";
+
+    //test.logが存在していた場合、ファイルの更新
+    if (fs::exists(path) && fs::is_regular_file(path))
+    {
+        // trunc で中身を消して 0 バイトにする
+        std::ofstream ofs(path, std::ios::out | std::ios::trunc);
+        // ここで書かずに閉じれば空ファイルになる
+    }
+
     test.Run();
 
     // AnimationInterface* anim = new AnimationInterface("anim.xml");
@@ -260,12 +270,12 @@ int main(int argc, char** argv)
 AodvExample::AodvExample()
     : size(400),
       step(),
-      totalTime(10),
+      totalTime(15),
       //pcapファイルでログを取得したい場合はtrueにする
       pcap(false),
       printRoutes(false),
       RREP_log(1),  //RREPのログを取得(1:ログ取得、0:ログ取得しない)
-      result_file("deff/p-log"), //結果を保存するファイル
+      result_file("deff/p-log.csv"), //結果を保存するファイル
       result_mode(2),
       WH_size(350),
       end_distance(600), //エンド間の距離
@@ -297,7 +307,7 @@ AodvExample::Configure(int argc, char** argv)
 
     cmd.Parse(argc, argv);
 
-    SeedManager::SetSeed(iteration);
+    SeedManager::SetSeed(2);
 
     if(end_distance -WH_size - 110 < 30)
     {

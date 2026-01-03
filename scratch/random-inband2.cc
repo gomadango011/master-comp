@@ -150,7 +150,7 @@ main(int argc, char** argv)
 AodvExample::AodvExample()
     : size(200),
       step(50),
-      totalTime(10),
+      totalTime(15),
       pcap(true),
       printRoutes(true),
       WH_size(300),
@@ -168,7 +168,7 @@ AodvExample::Configure(int argc, char** argv)
     std::random_device randomseed;
     // int rand = randomseed();
 
-    SeedManager::SetSeed(1);
+    SeedManager::SetSeed(2);
 
     CommandLine cmd(__FILE__);
 
