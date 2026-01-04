@@ -360,6 +360,17 @@ class RoutingTableEntry
         return m_NeighborCount;
     }
 
+    //隣接ノードリストを設定・取得
+    void SetNeighborList(const std::set<Ipv4Address>& list)
+    {
+        m_neighborList = list;
+    }
+
+    std::set<Ipv4Address> GetNeighborList() const
+    {
+        return m_neighborList;
+    }
+
     /// RREP_ACK timer
     Timer m_ackTimer;
 
@@ -419,6 +430,9 @@ class RoutingTableEntry
 
     ///隣接ノードの隣接ノード数
     uint32_t m_NeighborCount;
+
+    ///隣接ノードリスト
+    std::set<Ipv4Address> m_neighborList;
 };
 
 /**

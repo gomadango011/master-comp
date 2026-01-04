@@ -230,6 +230,9 @@ class RoutingProtocol : public Ipv4RoutingProtocol
         uint64_t totalAodvCtrlBytes = 0;
 
         std::map<uint32_t, RouteLatencyEntry> m_latencyTable;
+
+        //転送されたhelloメッセージを受信した回数
+        uint32_t helloForwardedCount = 0;
     };
 
     WhDetectionStats m_whStats;

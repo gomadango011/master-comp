@@ -420,8 +420,14 @@ RoutingProtocol::Start()
     m_rerrRateLimitTimer.Schedule(Seconds(1));
 
     //ステップ3用のコールバックを設定
-    Ptr<NetDevice> dev = m_ipv4->GetNetDevice(1);
-    dev->SetPromiscReceiveCallback(MakeCallback(&RoutingProtocol::PromiscSniff, this));
+    // Ptr<NetDevice> dev = m_ipv4->GetNetDevice(1);
+    // dev->SetPromiscReceiveCallback(MakeCallback(&RoutingProtocol::PromiscSniff, this));
+
+    for (uint32_t i = 0; i < m_ipv4->GetNInterfaces(); ++i) 
+    {
+        Ptr<NetDevice> d = m_ipv4->GetNetDevice(i);
+        if (d) d->SetPromiscReceiveCallback(MakeCallback(&RoutingProtocol::PromiscSniff, this));
+    }
 
     //WHリンクによりメッセージを受信した場合のコールバックを設定
     // if (m_isWhNode)
@@ -1420,7 +1426,7 @@ void
 RoutingProtocol::SendTo(Ptr<Socket> socket, Ptr<Packet> packet, Ipv4Address destination)
 {
     //ステップ3の認証パケット、認証応答パケット、送信停止・監視依頼メッセージの場合送信を許可する
-    bool forceSend = false;
+    // bool forceSend = false;
 
     // パケットを軽く解析
     // Ptr<Packet> p = packet->Copy();
@@ -3103,6 +3109,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
             /*nextHop=*/rrepHeader.GetDst(),
             /*lifetime=*/rrepHeader.GetLifeTime(),
             /*隣接ノードの隣接ノード数*/rrepHeader.GetNeighborCount());
+        newEntry.SetNeighborList(rrepHeader.GetNeighborList());
         m_routingTable.AddRoute(newEntry);
     }
     else
@@ -3117,6 +3124,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         toNeighbor.SetHop(1);
         toNeighbor.SetNextHop(rrepHeader.GetDst());
         toNeighbor.SetNeighborCount(rrepHeader.GetNeighborCount());
+        toNeighbor.SetNeighborList(rrepHeader.GetNeighborList());
         m_routingTable.Update(toNeighbor);
     }
 
@@ -3130,66 +3138,69 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
     // A: receiver (このノード), B: rrepHeader.GetDst()
     // =========================================================
 
-    //自身の隣接ノードリストを取得
-    std::set<Ipv4Address> neighborList; //自身の隣接ノードリスト
+    // //自身の隣接ノードリストを取得
+    // std::set<Ipv4Address> neighborList; //自身の隣接ノードリスト
 
-    for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
-    it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
-    {
-        const RoutingTableEntry& e = it->second;
-        if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
-        {
-            // NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination());
-            neighborList.insert(e.GetDestination());
-        }
-    }
+    // for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
+    // it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
+    // {
+    //     const RoutingTableEntry& e = it->second;
+    //     if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
+    //     {
+    //         // NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination());
+    //         neighborList.insert(e.GetDestination());
+    //     }
+    // }
+
+    std::set<Ipv4Address> neighborList = m_nb.GetNeighborAddresses();
+    auto candidates = m_nb.GetNeighborAddresses();
 
     // ========== 1. 自分(A) の Neighbor Set に sender を追加 ==========
     // グラフに自分(A)のエントリがない場合は作成
-    if (m_localGraph.find(receiver) == m_localGraph.end())
-    {
-        for (auto &n : neighborList)
-        {
-            m_localGraph[receiver].insert(n);
-            m_localGraph[n].insert(receiver);
-        }
-    }
-    else{
-        for (auto &n : neighborList)
-        {
-            m_localGraph[receiver].insert(n);
-            m_localGraph[n].insert(receiver);
-        }
-    }
+    // if (m_localGraph.find(receiver) == m_localGraph.end())
+    // {
+    //     for (auto &n : neighborList)
+    //     {
+    //         m_localGraph[receiver].insert(n);
+    //         m_localGraph[n].insert(receiver);
+    //     }
+    // }
+    // else{
+    //     for (auto &n : neighborList)
+    //     {
+    //         m_localGraph[receiver].insert(n);
+    //         m_localGraph[n].insert(receiver);
+    //     }
+    // }
 
     // ----- NB: B の 1-hop 隣接集合（Hello に含まれる neighborList） -----
     std::set<Ipv4Address> targetNeighborVec = rrepHeader.GetNeighborList();
-    std::set<Ipv4Address> NB(targetNeighborVec.begin(), targetNeighborVec.end());
+    // std::set<Ipv4Address> NB(targetNeighborVec.begin(), targetNeighborVec.end());
 
     Ipv4Address helloSender = rrepHeader.GetDst();
 
-    if(m_localGraph.find(helloSender) == m_localGraph.end())
-    {
-        for (auto &n : NB)
-        {
-            m_localGraph[helloSender].insert(n);
-            m_localGraph[n].insert(helloSender); // これが重要！
-        }
-    }else{
-        for (auto &n : NB)
-        {
-            m_localGraph[helloSender].insert(n);
-            m_localGraph[n].insert(helloSender); // これが重要！
-        }
-    }
+    // if(m_localGraph.find(helloSender) == m_localGraph.end())
+    // {
+    //     for (auto &n : NB)
+    //     {
+    //         m_localGraph[helloSender].insert(n);
+    //         m_localGraph[n].insert(helloSender); // これが重要！
+    //     }
+    // }else{
+    //     for (auto &n : NB)
+    //     {
+    //         m_localGraph[helloSender].insert(n);
+    //         m_localGraph[n].insert(helloSender); // これが重要！
+    //     }
+    // }
 
-    // sender を自分(A)の隣接リストに追加
-    if (std::find(m_localGraph[receiver].begin(),
-                m_localGraph[receiver].end(),
-                helloSender) == m_localGraph[receiver].end())
-    {
-        m_localGraph[receiver].insert(helloSender);
-    }
+    // // sender を自分(A)の隣接リストに追加
+    // if (std::find(m_localGraph[receiver].begin(),
+    //             m_localGraph[receiver].end(),
+    //             helloSender) == m_localGraph[receiver].end())
+    // {
+    //     m_localGraph[receiver].insert(helloSender);
+    // }
 
     if (Simulator::Now() < Seconds(3.0))
     {
@@ -3204,6 +3215,11 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
     // }
 
     NS_LOG_DEBUG("ステップ2検知開始");
+
+    if(isRebroadcasted)
+    {
+        m_whStats.helloForwardedCount++;
+    }
     
     // double myNeighborCount = static_cast<double>(neighborList.size());
     double sumNeighborCount = 0.0;  //Aの隣接ノードの隣接ノード数
@@ -3280,9 +3296,9 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         //排他的隣接ノードリストと共通隣接ノードリストを作成
         std::set<Ipv4Address> exclusiveNeighbors;   //排他的隣接ノードリスト
         std::set<Ipv4Address> commonNeighbors;
-        
-        //排他的隣接ノードリストと共通隣接ノードリストを作成
-        for (const auto& n : m_localGraph[receiver])
+
+        //排的隣接ノードリストと共通隣接ノードリストを作成
+        for (const auto& n : neighborList)
         {
             // B 自身は EA から除外
             if (n == helloSender)
@@ -3290,7 +3306,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
                 continue;
             }
             // NB に含まれていないノードのみ EA に入れる
-            if (NB.find(n) == NB.end())
+            if (targetNeighborVec.find(n) == targetNeighborVec.end())
             {
                 NS_LOG_DEBUG("判定開始ノード：" << receiver << "　判定対象ノード：" << helloSender <<
                              "の排他的隣接ノードを追加: " << n);
@@ -3312,7 +3328,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
             if(rA <= 0.0)
             {
                 NS_LOG_DEBUG("判定開始ノードの隣接ノード比率が0以下でした。ステップ3に進みます。");
-                StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
+                StartStep3Detection(receiver, helloSender, neighborList, targetNeighborVec, commonNeighbors, isRebroadcasted);
             }
 
             // CREDND の特例ケースのしきい値 (論文では 1.5)
@@ -3379,7 +3395,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
 
             }else{
                 NS_LOG_DEBUG("特例ケース: rA または rB がしきい値以下のため、ステップ3に進みます。");
-                StartStep3Detection(receiver, helloSender, neighborList, NB, commonNeighbors, isRebroadcasted);
+                StartStep3Detection(receiver, helloSender, neighborList, targetNeighborVec, commonNeighbors, isRebroadcasted);
                 return;
             }
 
@@ -3390,7 +3406,7 @@ RoutingProtocol::ProcessHello(RrepHeader& rrepHeader, Ipv4Address receiver, bool
         SendDetectionReq_to_ExNeighbors(rrepHeader,
                                         receiver, 
                                         exclusiveNeighbors,
-                                        NB,
+                                        targetNeighborVec,
                                         isRebroadcasted
                                     );
     }else{
@@ -3889,7 +3905,9 @@ RoutingProtocol::PromiscSniff(Ptr<NetDevice> dev,
                               NetDevice::PacketType type)
 {
     // 自分の IP
-    Ipv4Address myaddr = m_ipv4->GetAddress(1,0).GetLocal();
+    int32_t ifIndex = m_ipv4->GetInterfaceForDevice(dev);
+    Ipv4Address myaddr = m_ipv4->GetAddress(ifIndex, 0).GetLocal();
+
 
 
     // =========================================================
@@ -4684,24 +4702,39 @@ RoutingProtocol::RecvVerificationStart(Ptr<Packet> p, Ipv4Address receiver, Ipv4
         // (追加処理) B の排他的隣接ノードに送信停止フラグ ModeFlag=0 を送る
         //------------------------------------------------------------------
 
-        // B の隣接ノードリスト
-        auto itB = m_localGraph.find(B);
-        if (itB == m_localGraph.end())
+        //自身（判定対象ノード）の隣接ノードリストを取得
+        auto neighborsB = m_nb.GetNeighborAddresses();
+
+        //ルーチングテーブルから判定開始ノードの隣接ノードを取得
+        RoutingTableEntry toA;
+        if(!m_routingTable.LookupRoute(A, toA))
         {
-            NS_LOG_WARN("[Step3] B の隣接ノードリストが存在しません: " << B);
+            NS_LOG_WARN("[Step3] ルーチングテーブルに判定開始ノード A=" << A << " への経路が存在しません。");
             return;
         }
-        const auto &neighborsB = itB->second;
 
-        auto itA = m_localGraph.find(A);
-        std::set<Ipv4Address> neighborsA;
-        if (itA == m_localGraph.end())
-        {
-            NS_LOG_WARN("[Step3] A の隣接ノードリストが存在しません: " << A);
+        // A の隣接ノードリストを取得
+        std::set<Ipv4Address> neighborsA = toA.GetNeighborList();
+        neighborsA.erase(B); // B 自身は除外
+
+        // // B の隣接ノードリスト
+        // auto itB = m_localGraph.find(B);
+        // if (itB == m_localGraph.end())
+        // {
+        //     NS_LOG_WARN("[Step3] B の隣接ノードリストが存在しません: " << B);
+        //     return;
+        // }
+        // const auto &neighborsB = itB->second;
+
+        // auto itA = m_localGraph.find(A);
+        // std::set<Ipv4Address> neighborsA;
+        // if (itA == m_localGraph.end())
+        // {
+        //     NS_LOG_WARN("[Step3] A の隣接ノードリストが存在しません: " << A);
             
-        }else{
-            neighborsA = itA->second;
-        }
+        // }else{
+        //     neighborsA = itA->second;
+        // }
 
         // B の排他的隣接ノード = neighborsB - neighborsA
         std::set<Ipv4Address> exNeighborsB;
@@ -5595,7 +5628,7 @@ RoutingProtocol::SendDetectionReq_to_ExNeighbors(const RrepHeader & rrepHeader,
     }
 
     //ステップ2の検知メッセージをすべて受信できなかった場合タイマを設定
-    const uint16_t ttl = 7;
+    // const uint16_t ttl = 7;
     // Time wait = 2 * m_nodeTraversalTime * (ttl + m_timeoutBuffer) + MilliSeconds(300);
     Time wait = Seconds(2);
 
@@ -6392,27 +6425,57 @@ RoutingProtocol::SendHello()
      *   Lifetime                       AllowedHelloLoss * HelloInterval
      */
 
-    //隣接ノード数を取得
-    uint32_t neigborCount =0;
-
     NS_LOG_DEBUG("IPアドレス：" << m_ipv4->GetAddress(1, 0).GetLocal());
     
-    //隣接ノード数の平均隣接ノード数と、自身の隣接ノードをリストアップ
-    double totalNeighborCount = 0;  //全隣接ノードの隣接ノード数の合計
-    std::set<Ipv4Address> neighborList; //自身の隣接ノードリスト
+    //元コード
+    // //隣接ノード数の平均隣接ノード数と、自身の隣接ノードをリストアップ
+    // double totalNeighborCount = 0;  //全隣接ノードの隣接ノード数の合計
+    // std::set<Ipv4Address> neighborList; //自身の隣接ノードリスト
+    //隣接ノード数を取得
+    // uint32_t neigborCount =0;
 
-    for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
-     it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
+    // for (auto it = m_routingTable.m_ipv4AddressEntry.begin();
+    //  it != m_routingTable.m_ipv4AddressEntry.end(); ++it)
+    // {
+    //     const RoutingTableEntry& e = it->second;
+    //     if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
+    //     {
+    //         // NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination() 
+    //         //               << "隣接ノードの隣接ノード数：" << e.GetNeighborCount());
+    //         neigborCount++;
+    //         totalNeighborCount += e.GetNeighborCount();
+    //         neighborList.insert(e.GetDestination());
+    //     }
+    // }
+
+    // --- 自身の隣接ノード数/リストは Neighbors(m_nb) から取得 ---
+    double totalNeighborCount = 0.0;            // 全隣接ノードの「隣接ノード数」の合計（Hello等で相手が広告した値）
+    std::set<Ipv4Address> neighborList = m_nb.GetNeighborAddresses(); // 自身の隣接ノードリスト（1-hopの生存ノード）
+    uint32_t neigborCount = m_nb.GetNeighborCount();                  // 自身の隣接ノード数
+
+    std::ofstream ofs("test.log", std::ios::out | std::ios::app);
+    uint32_t nodeId = GetObject<Node>()->GetId();
+
+    // --- 各隣接ノードが持つ隣接ノード数（あなたの拡張フィールド）を合計 ---
+    for (const auto& nbAddr : neighborList)
     {
-        const RoutingTableEntry& e = it->second;
-        if (e.GetHop() == 1 && e.GetFlag() == VALID && e.GetNextHop() != Ipv4Address("127.0.0.1") && e.GetNextHop() != Ipv4Address("10.255.255.255"))
+        // 念のためループバック/ブロードキャスト系は除外（必要なら）
+        if (nbAddr == Ipv4Address("127.0.0.1") || nbAddr == Ipv4Address("10.255.255.255"))
         {
-            // NS_LOG_UNCOND("隣接ノードのIPアドレス: " << e.GetDestination() 
-            //               << "隣接ノードの隣接ノード数：" << e.GetNeighborCount());
-            neigborCount++;
-            totalNeighborCount += e.GetNeighborCount();
-            neighborList.insert(e.GetDestination());
+            continue;
         }
+
+        ofs << "ノードID:" << nodeId << " 隣接ノードIPアドレス:" << nbAddr << std::endl;
+
+        RoutingTableEntry e;
+        // ここで e.GetNeighborCount()（相手がHello等で送ってきた隣接ノード数）を取りたいので
+        // ルーティングテーブルから該当エントリを取得する（あなたの実装に合わせて LookupRoute を使用）
+        if (m_routingTable.LookupRoute(nbAddr, e))
+        {  
+            totalNeighborCount += e.GetNeighborCount();
+            ofs << "隣接ノードの隣接ノード数：" << e.GetNeighborCount() << std::endl;
+        }
+        // Lookupできない場合は、相手の広告値が取れないので無視（旧コードでも取れない）
     }
 
     double avNeighborCount = 0;
@@ -6433,6 +6496,11 @@ RoutingProtocol::SendHello()
     }else{
         NS_LOG_DEBUG("隣接ノードの平均隣接ノード数が0以下です。：" << avNeighborCount);
     }
+
+    
+    ofs << "Helloメッセージ送信  ノードID：" << nodeId << "   シミュレーション時間：" << Simulator::Now() << std::endl;
+    ofs << "隣接ノード数：" << neigborCount << "  隣接ノード比率：" << neighborRatio << "隣接ノードの隣接ノード数" << totalNeighborCount << std::endl;
+    ofs.close();
 
     NS_LOG_DEBUG("隣接ノード比率: " << neighborRatio);
 
@@ -6462,7 +6530,7 @@ RoutingProtocol::SendHello()
         
         Ptr<Packet> packet = Create<Packet>();
         SocketIpTtlTag tag;
-        tag.SetTtl(1);
+        tag.SetTtl(10);
         packet->AddPacketTag(tag);
         packet->AddHeader(helloHeader);
         TypeHeader tHeader(AODVTYPE_RREP);

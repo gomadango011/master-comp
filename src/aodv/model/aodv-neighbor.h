@@ -24,6 +24,7 @@
 #include "ns3/timer.h"
 
 #include <vector>
+#include <set>   // 追加
 
 namespace ns3
 {
@@ -143,10 +144,28 @@ class Neighbors
         return m_handleLinkFailure;
     }
 
-    //隣接ノード数を取得
-    uint32_t GetNeighborCount() const
+    // //隣接ノード数を取得
+    // uint32_t GetNeighborCount() const
+    // {
+    //     return m_nb.size();
+    // }
+
+    // aodv-neighbor.h（class Neighbors の public: に追加）
+    uint32_t GetNeighborCount()
     {
-        return m_nb.size();
+    Purge();                 // 期限切れを除外してから数える
+    return m_nb.size();
+    }
+
+    std::set<Ipv4Address> GetNeighborAddresses()
+    {
+    Purge();
+    std::set<Ipv4Address> v;
+    for (const auto& e : m_nb)
+    {
+        v.insert(e.m_neighborAddress);
+    }
+    return v;
     }
 
   private:
@@ -173,6 +192,7 @@ class Neighbors
      * @param hdr header of the packet
      */
     void ProcessTxError(const WifiMacHeader& hdr);
+
 };
 
 } // namespace aodv

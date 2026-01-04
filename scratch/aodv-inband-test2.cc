@@ -19,10 +19,14 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/animation-interface.h"
 
+#include <fstream>
+#include <filesystem>
+#include <limits.h>
+#include <stdio.h>
 #include <cmath>
 #include <iostream>
-#include <random>   // ★ これを追加
 
+namespace fs = std::filesystem;
 using namespace ns3;
 
 /**
@@ -47,6 +51,30 @@ using namespace ns3;
  * stopping ping replies reception after sequence number 33. If the step size is reduced
  * to cover the gap, then also the following pings can be received.
  */
+
+ std::ofstream ofs;
+
+//ファイルを更新または作成
+void
+OpenLogFileOverwrite(std::ofstream& ofs, const std::string& filepath)
+{
+    fs::path p(filepath);
+
+    // 親ディレクトリが無ければ作成
+    if (!p.parent_path().empty())
+    {
+        fs::create_directories(p.parent_path());
+    }
+
+    // 上書きモードで open（存在すれば中身は消える）
+    ofs.open(filepath, std::ios::out | std::ios::app);
+
+    if (!ofs.is_open())
+    {
+        NS_FATAL_ERROR("Cannot open result file: " << filepath);
+    }
+}
+
 class AodvExample
 {
   public:
@@ -97,18 +125,6 @@ class AodvExample
     //攻撃者のインターフェースコンテナ
     Ipv4InterfaceContainer mal_ifcont;
 
-    //WHリンクの長さ
-    int WH_size;
-
-    //検知待機時間
-    double wait_time;
-
-    //エンド間の距離
-    int end_distance;
-
-    //シード値を決定するためのイテレーション
-    int iteration;
-
   private:
     /// Create the nodes
     void CreateNodes();
@@ -133,24 +149,9 @@ void PrintAllRoutingTables(Ptr<Node> node, Ptr<OutputStreamWrapper> stream)
     }
 }
 
-void ClearFileIfExists(const std::string& path)
-{
-    namespace fs = std::filesystem;
-
-    if (fs::exists(path) && fs::is_regular_file(path))
-    {
-        // trunc で中身を消して 0 バイトにする
-        std::ofstream ofs(path, std::ios::out | std::ios::trunc);
-        // ここで書かずに閉じれば空ファイルになる
-    }
-}
-
 int
 main(int argc, char** argv)
 {
-
-
-
     AodvExample test;
     if (!test.Configure(argc, argv))
     {
@@ -158,19 +159,17 @@ main(int argc, char** argv)
     }
 
     test.Run();
+    // test.Report(std::cout);
     return 0;
 }
 
 //-----------------------------------------------------------------------------
 AodvExample::AodvExample()
-    : size(400),
+    : size(200),
       step(50),
-      totalTime(15),
+      totalTime(5),
       pcap(true),
-      printRoutes(true),
-      WH_size(300),
-      end_distance(600), //エンド間の距離
-      iteration(1) //イテレーション
+      printRoutes(true)
 {
 }
 
@@ -180,11 +179,7 @@ AodvExample::Configure(int argc, char** argv)
     // Enable AODV logs by default. Comment this if too noisy
     // LogComponentEnable("AodvRoutingProtocol", LOG_LEVEL_ALL);
 
-    std::random_device randomseed;
-    // int rand = randomseed();
-
-    SeedManager::SetSeed(2);
-
+    SeedManager::SetSeed(1);
     CommandLine cmd(__FILE__);
 
     cmd.AddValue("pcap", "Write PCAP traces.", pcap);
@@ -192,18 +187,8 @@ AodvExample::Configure(int argc, char** argv)
     cmd.AddValue("size", "Number of nodes.", size);
     cmd.AddValue("time", "Simulation time, s.", totalTime);
     cmd.AddValue("step", "Grid step, m", step);
-    cmd.AddValue("WH_size", "WH size", WH_size); //WHの長さ
-    cmd.AddValue("end_distance", "end distance", end_distance); //エンド間の距離
-    cmd.AddValue("iteration", "iteration", iteration); //イテレーション
 
     cmd.Parse(argc, argv);
-
-    if(end_distance -WH_size - 110 < 30)
-    {
-        std::cerr << "エンド間の距離がWHリンクの長さよりも短いです。" << std::endl;
-        return false;
-    }
-
     return true;
 }
 
@@ -242,6 +227,85 @@ AodvExample::Run()
 }
 
 void
+AodvExample::Report(std::ostream& os)
+{
+    // ★ 出力ファイルを開く（追記 or 上書き）
+    OpenLogFileOverwrite(ofs,"deff/p-log-test.csv");
+
+    uint32_t totalTP = 0, totalFN = 0, totalFP = 0, totalTN = 0, totalNA = 0;
+    uint64_t totalBytes = 0;
+    uint32_t totalforwardedHello = 0;
+    std::vector<double> latencies;
+
+    // ===== ヘッダはファイルが空のときだけ =====
+    static bool headerWritten = false;
+    if (!headerWritten)
+    {
+        ofs << "seed,nodes,wh_mode,end_distance,"
+            << "tp,fn,fp,tn,"
+            << "wh_detection_rate,false_positive_rate,"
+            << "total_ctrl_bytes,avg_route_latency\n";
+        headerWritten = true;
+    }
+
+    for (uint32_t i = 0; i < nodes.GetN(); i++)
+    {
+        Ptr<Ipv4> ipv4 = nodes.Get(i)->GetObject<Ipv4>();
+        Ptr<Ipv4RoutingProtocol> rp = ipv4->GetRoutingProtocol();
+        Ptr<aodv::RoutingProtocol> aodv = DynamicCast<aodv::RoutingProtocol>(rp);
+        if (!aodv) continue;
+
+        auto stats = aodv->Getevaluation();
+
+        totalTP += stats.detectedWh;
+        totalFN += stats.undetectedWh;
+        totalFP += stats.falsePositive;
+        totalTN += stats.truenegative;
+        totalNA += stats.notApplicable;
+        totalBytes += stats.totalAodvCtrlBytes;
+        totalforwardedHello += stats.helloForwardedCount;
+
+        for (const auto &kv : stats.m_latencyTable)
+        {
+            const auto &entry = kv.second;
+            if (entry.latency.GetSeconds() > 0)
+                latencies.push_back(entry.latency.GetSeconds());
+        }
+    }
+
+    double detectionRate = (totalTP + totalFN > 0)
+                           ? (double)totalTP / (totalTP + totalFN)
+                           : 0.0;
+
+    double falsePositiveRate = (totalFP + totalTN > 0)
+                               ? (double)totalFP / (totalFP + totalTN)
+                               : 0.0;
+
+    double avgLatency = 0.0;
+    if (!latencies.empty()) {
+        double sum = 0;
+        for (double v : latencies) sum += v;
+        avgLatency = sum / latencies.size();
+    }
+
+     ofs << 1 << ","
+        << size << ","
+        << 2 << ","               // WhMode
+        << 200 << ","
+        << totalTP << ","
+        << totalFN << ","
+        << totalFP << ","
+        << totalTN << ","
+        << detectionRate << ","
+        << falsePositiveRate << ","
+        << totalBytes << ","
+        << avgLatency << ","
+        << totalforwardedHello << "\n";
+
+    ofs.close();
+}
+
+void
 AodvExample::CreateNodes()
 {
     std::cout << "Creating " << (unsigned)size << " nodes " << step << " m apart.\n";
@@ -253,19 +317,38 @@ AodvExample::CreateNodes()
         os << "node-" << i;
         Names::Add(os.str(), nodes.Get(i));
     }
+
     //ノードをランダムに配置
     MobilityHelper mobility;
     mobility.SetPositionAllocator ("ns3::RandomRectanglePositionAllocator",
-                                  "X", StringValue("ns3::UniformRandomVariable[Min=0|Max=800]"),
-                                  "Y", StringValue("ns3::UniformRandomVariable[Min=0|Max=800]")
+                                  "X", StringValue("ns3::UniformRandomVariable[Min=0|Max=200]"),
+                                  "Y", StringValue("ns3::UniformRandomVariable[Min=-100|Max=100]")
                                  );
+    
+    mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
 
     mobility.Install(nodes);
 
-    AnimationInterface::SetConstantPosition (nodes.Get (0), 0, 400);
-    AnimationInterface::SetConstantPosition (nodes.Get (1), 200, 400);  //WHノード
-    AnimationInterface::SetConstantPosition (nodes.Get (2), 600, 400); //WHノード
-    AnimationInterface::SetConstantPosition (nodes.Get (size - 1), 800, 400);
+    AnimationInterface::SetConstantPosition (nodes.Get (0), 0, 0);
+    AnimationInterface::SetConstantPosition (nodes.Get (1), 50, 0);  //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (2), 150, 0); //WHノード
+
+    AnimationInterface::SetConstantPosition (nodes.Get (3), -10, 20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (4), -10, -20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (5), -20, 0); //WHノード
+
+    AnimationInterface::SetConstantPosition (nodes.Get (6), 20, 20);
+    AnimationInterface::SetConstantPosition (nodes.Get (7), 20, 0);
+    AnimationInterface::SetConstantPosition (nodes.Get (8), 20, -20);
+
+    AnimationInterface::SetConstantPosition (nodes.Get (9), 220, 20); //WHノード
+    AnimationInterface::SetConstantPosition (nodes.Get (10), 220, -20); //WHノード
+
+    AnimationInterface::SetConstantPosition (nodes.Get (11), 170, 20);
+    AnimationInterface::SetConstantPosition (nodes.Get (12), 170, 0);
+    AnimationInterface::SetConstantPosition (nodes.Get (13), 170, -20);
+
+    AnimationInterface::SetConstantPosition (nodes.Get (size - 1), 200, 0);
     // AnimationInterface::SetConstantPosition (nodes.Get (4), -20, 20);
     // AnimationInterface::SetConstantPosition (nodes.Get (5), -20, -20);
     // AnimationInterface::SetConstantPosition (nodes.Get (6), 220, 20);
@@ -293,31 +376,15 @@ AodvExample::CreateDevices()
 {
     WifiMacHelper wifiMac;
     wifiMac.SetType("ns3::AdhocWifiMac");
-    
-    Ptr<YansWifiChannel> wifiChannel = CreateObject<YansWifiChannel> ();
-
-    Ptr<RangePropagationLossModel> rangeModel = CreateObject<RangePropagationLossModel> ();
-    rangeModel->SetAttribute ("MaxRange", DoubleValue (100.0)); // 通信範囲を100mに設定
-
-    wifiChannel->SetPropagationLossModel(rangeModel);
-    wifiChannel->SetPropagationDelayModel(CreateObject<ConstantSpeedPropagationDelayModel>());
-
     YansWifiPhyHelper wifiPhy;
-    //デフォルトの動作状態でチャネル ヘルパーを作成します。デフォルトでは、定数、光の速度に等しい伝播遅延、および基準距離 1m での基準損失 46.6777 dB の対数距離モデルに基づく伝播損失を持つチャネル モデルを作成します。
-    wifiPhy.SetChannel(wifiChannel);
-
-    //送信電力と受信電力を設定
-    //送信電力と受信電力を設定
-    // wifiPhy.Set("TxPowerStart", DoubleValue(24.7)); // 送信電力 20 dBm
-    // wifiPhy.Set("TxPowerEnd", DoubleValue(24.7));
-
+    YansWifiChannelHelper wifiChannel = YansWifiChannelHelper::Default();
+    wifiPhy.SetChannel(wifiChannel.Create());
     WifiHelper wifi;
     wifi.SetRemoteStationManager("ns3::ConstantRateWifiManager",
                                  "DataMode",
                                  StringValue("OfdmRate6Mbps"),
                                  "RtsCtsThreshold",
                                  UintegerValue(0));
-
     devices = wifi.Install(wifiPhy, wifiMac, nodes);
 
     PointToPointHelper pointToPoint;
@@ -338,8 +405,6 @@ AodvExample::InstallInternetStack()
 {
     AodvHelper aodv;
     // you can configure AODV attributes here using aodv.Set(name, value)
-
-    aodv.Set("WhMode", UintegerValue(2));  // 0 = 通常ノードのみ、1 = 提案手法のWH攻撃、2 = 既存手法のWH攻撃、3 = 外部WH攻撃
     InternetStackHelper stack;
     stack.SetRoutingHelper(aodv); // has effect on the next Install ()
     stack.Install(nodes);
@@ -408,79 +473,3 @@ AodvExample::InstallApplications()
     //                     mob,
     //                     Vector(1e5, 1e5, 1e5));
 }
-
-void
-AodvExample::Report(std::ostream& os)
-{
-    // ★ 出力ファイルを開く（追記 or 上書き）
-    std::ofstream fout("aodv_result2.log", std::ios::out);
-
-    auto write = [&](auto const &msg) {
-        os   << msg << std::endl;   // 標準出力
-        fout << msg << std::endl;   // ファイル出力
-    };
-
-    write("==================== AODV PERFORMANCE REPORT ====================");
-
-    uint32_t totalTP = 0, totalFN = 0, totalFP = 0, totalTN = 0, totalNA = 0;
-    uint64_t totalBytes = 0;
-    std::vector<double> latencies;
-
-    for (uint32_t i = 0; i < nodes.GetN(); i++)
-    {
-        Ptr<Ipv4> ipv4 = nodes.Get(i)->GetObject<Ipv4>();
-        Ptr<Ipv4RoutingProtocol> rp = ipv4->GetRoutingProtocol();
-        Ptr<aodv::RoutingProtocol> aodv = DynamicCast<aodv::RoutingProtocol>(rp);
-        if (!aodv) continue;
-
-        auto stats = aodv->Getevaluation();
-
-        totalTP += stats.detectedWh;
-        totalFN += stats.undetectedWh;
-        totalFP += stats.falsePositive;
-        totalTN += stats.truenegative;
-        totalNA += stats.notApplicable;
-        totalBytes += stats.totalAodvCtrlBytes;
-
-        for (const auto &kv : stats.m_latencyTable)
-        {
-            const auto &entry = kv.second;
-            if (entry.latency.GetSeconds() > 0)
-                latencies.push_back(entry.latency.GetSeconds());
-        }
-    }
-
-    double detectionRate = (totalTP + totalFN > 0)
-                           ? (double)totalTP / (totalTP + totalFN)
-                           : 0.0;
-
-    double falsePositiveRate = (totalFP + totalTN > 0)
-                               ? (double)totalFP / (totalFP + totalTN)
-                               : 0.0;
-
-    double avgLatency = 0.0;
-    if (!latencies.empty()) {
-        double sum = 0;
-        for (double v : latencies) sum += v;
-        avgLatency = sum / latencies.size();
-    }
-
-    write("WH Detection Rate        : " + std::to_string(detectionRate));
-    write("False Positive Rate      : " + std::to_string(falsePositiveRate));
-    write("Average Route Latency    : " + std::to_string(avgLatency) + " sec");
-    write("");
-    write("--- Detail Stats ---");
-    write("TP  : " + std::to_string(totalTP));
-    write("FN  : " + std::to_string(totalFN));
-    write("FP  : " + std::to_string(totalFP));
-    write("TN  : " + std::to_string(totalTN));
-    write("NA  : " + std::to_string(totalNA));
-    write("Detection Bytes : " + std::to_string(totalBytes) + " bytes");
-
-    write("===============================================================");
-
-    fout.close();
-}
-
-
-
